@@ -28,7 +28,7 @@ foreach(dep IN ITEMS bgfx bx bimg glfw)
 endforeach()
 
 # -------------------------
-# GLFW (build from submodule, Wayland support is decided by your system deps)
+# GLFW (build from submodule, Wayland support is decided by system deps)
 # -------------------------
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -70,7 +70,6 @@ if(BGFX_BIN_DIR STREQUAL "" OR NOT EXISTS "${BGFX_BIN_DIR}")
 endif()
 
 # Map CMake build type -> bgfx suffix (Debug/Release)
-# If you use Ninja Multi-Config, you can adapt this later; for now it matches your current single-config usage.
 set(_BGFX_SUFFIX "Release")
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(_BGFX_SUFFIX "Debug")
@@ -81,7 +80,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 endif()
 
 # Find the exact libraries. Names vary by bgfx revision/config;
-# these patterns cover the common ones.
 find_library(BGFX_LIB NAMES bgfx${_BGFX_SUFFIX} bgfx PATHS "${BGFX_BIN_DIR}" NO_DEFAULT_PATH)
 find_library(BX_LIB   NAMES bx${_BGFX_SUFFIX}   bx   PATHS "${BGFX_BIN_DIR}" NO_DEFAULT_PATH)
 find_library(BIMG_LIB NAMES bimg${_BGFX_SUFFIX} bimg PATHS "${BGFX_BIN_DIR}" NO_DEFAULT_PATH)
