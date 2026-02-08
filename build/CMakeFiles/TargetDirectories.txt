@@ -1,0 +1,9 @@
+/home/csabi/Documents/Önlab/SegMesh/build/CMakeFiles/segmesh.dir
+/home/csabi/Documents/Önlab/SegMesh/build/CMakeFiles/edit_cache.dir
+/home/csabi/Documents/Önlab/SegMesh/build/CMakeFiles/rebuild_cache.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/CMakeFiles/edit_cache.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/CMakeFiles/rebuild_cache.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/src/CMakeFiles/glfw.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/src/CMakeFiles/update_mappings.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/src/CMakeFiles/edit_cache.dir
+/home/csabi/Documents/Önlab/SegMesh/build/submods/glfw/src/CMakeFiles/rebuild_cache.dir

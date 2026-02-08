@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/csabi/Documents/\u00d6nlab/SegMesh/build/cmake_install.cmake",
+		"/home/csabi/Documents/\u00d6nlab/SegMesh/build/submods/glfw/cmake_install.cmake",
+		"/home/csabi/Documents/\u00d6nlab/SegMesh/build/submods/glfw/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
