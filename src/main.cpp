@@ -8,7 +8,7 @@
 #include <wayland-client-core.h>
 
 #include <cstdint>
-#include <cstdlib>
+#include <cmath>
 #include <iostream>
 
 int main()
@@ -30,11 +30,11 @@ int main()
 
     int w = 0, h = 0;
     // Wayland can report 0x0 initially; wait for a real size.
-       while (w == 0 || h == 0)
-       {
-           glfwWaitEvents();
-           glfwGetFramebufferSize(window, &w, &h);
-       }
+    while (w == 0 || h == 0)
+    {
+        glfwWaitEvents();
+        glfwGetFramebufferSize(window, &w, &h);
+    }
 
     wl_display* display = glfwGetWaylandDisplay();
     wl_surface* surface = glfwGetWaylandWindow(window);
@@ -73,11 +73,9 @@ int main()
 
     std::cerr << "bgfx renderer: " << bgfx::getRendererName(bgfx::getRendererType()) << "\n";
 
-    // Make sure backbuffer is sized
-    bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
+    bgfx::setDebug(BGFX_DEBUG_TEXT);
 
-    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x2a2a2aff, 1.0f, 0);
-    bgfx::setViewRect(0, 0, 0, (uint16_t)w, (uint16_t)h);
+    bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
 
     while (!glfwWindowShouldClose(window))
     {
@@ -94,15 +92,22 @@ int main()
             }
 
             bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
-            bgfx::setViewRect(0, 0, 0, (uint16_t)w, (uint16_t)h);
         }
 
-        // Clear even with no draw calls
+        const float t = static_cast<float>(glfwGetTime());
+        const uint8_t r = static_cast<uint8_t>(127.0f + 127.0f * std::sin(t * 1.1f));
+        const uint8_t g = static_cast<uint8_t>(127.0f + 127.0f * std::sin(t * 1.7f + 1.0f));
+        const uint8_t b = static_cast<uint8_t>(127.0f + 127.0f * std::sin(t * 2.3f + 2.0f));
+        const uint32_t abgr = 0xff000000u | (uint32_t(b) << 16) | (uint32_t(g) << 8) | uint32_t(r);
+
+        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, abgr, 1.0f, 0);
+        bgfx::setViewRect(0, 0, 0, (uint16_t)w, (uint16_t)h);
+
         bgfx::touch(0);
 
-        // Optional debug text (should show on screen if BGFX_DEBUG_TEXT works for that renderer)
         bgfx::dbgTextClear();
         bgfx::dbgTextPrintf(0, 0, 0x0f, "SegMesh: bgfx %s", bgfx::getRendererName(bgfx::getRendererType()));
+        bgfx::dbgTextPrintf(0, 1, 0x0f, "Animating clear color.");
 
         bgfx::frame();
     }

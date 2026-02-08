@@ -59,10 +59,10 @@
 20	673	1770589586018114904	submods/glfw/src/CMakeFiles/glfw.dir/x11_init.c.o	fda3e5a4d89bd238
 216	675	1770589586213175497	submods/glfw/src/CMakeFiles/glfw.dir/wl_init.c.o	a3da02216b139cde
 17	706	1770589586014811266	submods/glfw/src/CMakeFiles/glfw.dir/input.c.o	fbdf12c214c7c7a6
-3	529	1770592487303950677	CMakeFiles/segmesh.dir/src/main.cpp.o	28a93d347bc0c52d
+3	529	1770593654115284410	CMakeFiles/segmesh.dir/src/main.cpp.o	28a93d347bc0c52d
 198	1173	1770589586195175032	submods/glfw/src/CMakeFiles/glfw.dir/x11_window.c.o	d56ec1de149437e3
 241	1230	1770589586238753870	submods/glfw/src/CMakeFiles/glfw.dir/wl_window.c.o	46a57af079acc359
 1230	1285	1770589587227201670	submods/glfw/src/libglfw3.a	571704b91b6b7213
-529	770	1770592487829953425	segmesh	4d3efc0f04f3819e
-2	522	1770593085137166231	CMakeFiles/segmesh.dir/src/main.cpp.o	28a93d347bc0c52d
-522	764	1770593085657170467	segmesh	4d3efc0f04f3819e
+529	770	1770593654641287886	segmesh	4d3efc0f04f3819e
+4	566	1770593761467985936	CMakeFiles/segmesh.dir/src/main.cpp.o	28a93d347bc0c52d
+566	818	1770593762029989570	segmesh	4d3efc0f04f3819e
