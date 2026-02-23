@@ -43,6 +43,8 @@ set(BGFX_DIR "${PROJECT_SOURCE_DIR}/submods/bgfx")
 set(BX_DIR   "${PROJECT_SOURCE_DIR}/submods/bx")
 set(BIMG_DIR "${PROJECT_SOURCE_DIR}/submods/bimg")
 
+set(SHADER_DIR "${PROJECT_SOURCE_DIR}/assets/shaders")
+
 # -------------------------
 # Find prebuilt bgfx libs (built outside CMake)
 # -------------------------
@@ -92,6 +94,15 @@ if(NOT BGFX_LIB OR NOT BX_LIB OR NOT BIMG_LIB)
   )
 endif()
 
+find_program(SHADERC
+  NAMES shaderc${_BGFX_SUFFIX} shadercRelease shaderc
+  PATHS "${BGFX_BIN_DIR}"
+  NO_DEFAULT_PATH
+)
+if(NOT SHADERC)
+  message(FATAL_ERROR "Could not find shaderc in: ${BGFX_BIN_DIR}")
+endif()
+
 # Create imported targets
 add_library(bgfx STATIC IMPORTED GLOBAL)
 set_target_properties(bgfx PROPERTIES IMPORTED_LOCATION "${BGFX_LIB}")
@@ -116,6 +127,54 @@ add_executable(segmesh
   submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp
   submods/bgfx/examples/common/imgui/imgui.cpp
 )
+
+set(SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/shaders/spirv")
+set(VERTEX_SHADER_OUTPUT "${SHADER_OUTPUT_DIR}/vs_triangle.bin")
+set(FRAGMENT_SHADER_OUTPUT "${SHADER_OUTPUT_DIR}/fs_triangle.bin")
+
+add_custom_command(
+  OUTPUT "${VERTEX_SHADER_OUTPUT}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_OUTPUT_DIR}"
+  COMMAND "${SHADERC}"
+    -f "${SHADER_DIR}/vs_triangle.sc"
+    -o "${VERTEX_SHADER_OUTPUT}"
+    --type vertex
+    --platform linux
+    --profile spirv
+    --varyingdef "${SHADER_DIR}/varying.def.sc"
+    -i "${BGFX_DIR}/src"
+    -i "${BGFX_DIR}/examples/common"
+  DEPENDS
+    "${SHADER_DIR}/vs_triangle.sc"
+    "${SHADER_DIR}/varying.def.sc"
+  VERBATIM
+)
+
+add_custom_command(
+  OUTPUT "${FRAGMENT_SHADER_OUTPUT}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_OUTPUT_DIR}"
+  COMMAND "${SHADERC}"
+    -f "${SHADER_DIR}/fs_triangle.sc"
+    -o "${FRAGMENT_SHADER_OUTPUT}"
+    --type fragment
+    --platform linux
+    --profile spirv
+    --varyingdef "${SHADER_DIR}/varying.def.sc"
+    -i "${BGFX_DIR}/src"
+    -i "${BGFX_DIR}/examples/common"
+  DEPENDS
+    "${SHADER_DIR}/fs_triangle.sc"
+    "${SHADER_DIR}/varying.def.sc"
+  VERBATIM
+)
+
+add_custom_target(segmesh_shaders
+  DEPENDS
+    "${VERTEX_SHADER_OUTPUT}"
+    "${FRAGMENT_SHADER_OUTPUT}"
+)
+
+add_dependencies(segmesh segmesh_shaders)
 
 target_include_directories(segmesh PRIVATE
   "${BGFX_DIR}/include"

@@ -73,20 +73,11 @@ uint32_t packNormal(const Float3& normal)
     return nx | (ny << 8) | (nz << 16) | (0xffu << 24);
 }
 
-uint32_t packAbgr(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255)
-{
-    return uint32_t(r)
-        | (uint32_t(g) << 8)
-        | (uint32_t(b) << 16)
-        | (uint32_t(a) << 24);
-}
-
 struct MeshVertex
 {
     float x;
     float y;
     float z;
-    uint32_t abgr;
     uint32_t normal;
 
     static bgfx::VertexLayout layout;
@@ -95,8 +86,7 @@ struct MeshVertex
     {
         layout.begin()
             .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
-            .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true, false)
-            .add(bgfx::Attrib::Normal, 4, bgfx::AttribType::Uint8, true, true)
+            .add(bgfx::Attrib::Normal, 4, bgfx::AttribType::Uint8, true, false)
             .end();
     }
 };
@@ -219,7 +209,6 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         v.x = p.x;
         v.y = p.y;
         v.z = p.z;
-        v.abgr = packAbgr(210, 210, 210);
         v.normal = packNormal(normal);
 
         const uint32_t newIndex = static_cast<uint32_t>(outMesh.vertices.size());
@@ -701,9 +690,10 @@ int main(int argc, char** argv)
     }
 
     const auto shaderDir = findFirstExisting({
-        "submods/bgfx/examples/runtime/shaders/spirv",
-        "../submods/bgfx/examples/runtime/shaders/spirv",
-        "../../submods/bgfx/examples/runtime/shaders/spirv",
+        "build/shaders/spirv",
+        "shaders/spirv",
+        "../build/shaders/spirv",
+        "../../build/shaders/spirv",
     });
     if (!shaderDir.has_value())
     {
@@ -714,8 +704,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    bgfx::ShaderHandle vsh = loadShaderFromFile(*shaderDir / "vs_cubes.bin");
-    bgfx::ShaderHandle fsh = loadShaderFromFile(*shaderDir / "fs_cubes.bin");
+    bgfx::ShaderHandle vsh = loadShaderFromFile(*shaderDir / "vs_triangle.bin");
+    bgfx::ShaderHandle fsh = loadShaderFromFile(*shaderDir / "fs_triangle.bin");
     if (!bgfx::isValid(vsh) || !bgfx::isValid(fsh))
     {
         std::cerr << "Failed to load shader binaries from: " << *shaderDir << "\n";
@@ -744,10 +734,37 @@ int main(int argc, char** argv)
     }
 
     MeshVertex::initLayout();
+
+    bgfx::UniformHandle uBaseColor = bgfx::createUniform("u_baseColor", bgfx::UniformType::Vec4);
+    bgfx::UniformHandle uLightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
+    bgfx::UniformHandle uLightColor = bgfx::createUniform("u_lightColor", bgfx::UniformType::Vec4);
+    bgfx::UniformHandle uCameraPos = bgfx::createUniform("u_cameraPos", bgfx::UniformType::Vec4);
+    bgfx::UniformHandle uMaterial = bgfx::createUniform("u_material", bgfx::UniformType::Vec4);
+
     GpuMesh gpuMesh{};
     if (!uploadMesh(mesh, gpuMesh, error))
     {
         std::cerr << error << "\n";
+        if (bgfx::isValid(uBaseColor))
+        {
+            bgfx::destroy(uBaseColor);
+        }
+        if (bgfx::isValid(uLightDir))
+        {
+            bgfx::destroy(uLightDir);
+        }
+        if (bgfx::isValid(uLightColor))
+        {
+            bgfx::destroy(uLightColor);
+        }
+        if (bgfx::isValid(uCameraPos))
+        {
+            bgfx::destroy(uCameraPos);
+        }
+        if (bgfx::isValid(uMaterial))
+        {
+            bgfx::destroy(uMaterial);
+        }
         if (bgfx::isValid(meshProgram))
         {
             bgfx::destroy(meshProgram);
@@ -767,6 +784,13 @@ int main(int argc, char** argv)
     float rotateSpeed = 0.8f;
     bool autoRotate = true;
     bool wireframe = false;
+    float baseColor[3] = {0.78f, 0.78f, 0.78f};
+    float lightDirection[3] = {-0.45f, -0.9f, -0.25f};
+    float lightColor[3] = {1.0f, 0.98f, 0.95f};
+    float lightIntensity = 1.5f;
+    float ambientStrength = 0.22f;
+    float specularStrength = 0.32f;
+    float shininess = 64.0f;
 
     std::string modelLoadError;
 
@@ -824,6 +848,19 @@ int main(int argc, char** argv)
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, gpuMesh.vbh);
         bgfx::setIndexBuffer(gpuMesh.ibh, 0, gpuMesh.indexCount);
+
+        const Float3 lightDir = normalize({lightDirection[0], lightDirection[1], lightDirection[2]}, {-0.45f, -0.9f, -0.25f});
+        const float baseColorUniform[4] = {baseColor[0], baseColor[1], baseColor[2], 1.0f};
+        const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, lightIntensity};
+        const float lightColorUniform[4] = {lightColor[0], lightColor[1], lightColor[2], 1.0f};
+        const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
+        const float materialUniform[4] = {ambientStrength, specularStrength, shininess, 0.0f};
+
+        bgfx::setUniform(uBaseColor, baseColorUniform);
+        bgfx::setUniform(uLightDir, lightDirUniform);
+        bgfx::setUniform(uLightColor, lightColorUniform);
+        bgfx::setUniform(uCameraPos, cameraPosUniform);
+        bgfx::setUniform(uMaterial, materialUniform);
 
         uint64_t state = BGFX_STATE_WRITE_RGB
             | BGFX_STATE_WRITE_A
@@ -931,6 +968,14 @@ int main(int argc, char** argv)
         ImGui::SliderFloat("Camera distance", &cameraDistance, 1.0f, 10.0f);
         ImGui::SliderFloat("Camera yaw", &cameraYaw, -3.14f, 3.14f);
         ImGui::SliderFloat("Camera pitch", &cameraPitch, -1.2f, 1.2f);
+        ImGui::Separator();
+        ImGui::ColorEdit3("Base color", baseColor);
+        ImGui::SliderFloat3("Light direction", lightDirection, -1.0f, 1.0f);
+        ImGui::ColorEdit3("Light color", lightColor);
+        ImGui::SliderFloat("Light intensity", &lightIntensity, 0.0f, 4.0f);
+        ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
+        ImGui::SliderFloat("Specular", &specularStrength, 0.0f, 1.0f);
+        ImGui::SliderFloat("Shininess", &shininess, 8.0f, 256.0f);
         ImGui::Checkbox("Wireframe", &wireframe);
         ImGui::End();
 
@@ -942,6 +987,26 @@ int main(int argc, char** argv)
     imguiDestroy();
 
     destroyGpuMesh(gpuMesh);
+    if (bgfx::isValid(uBaseColor))
+    {
+        bgfx::destroy(uBaseColor);
+    }
+    if (bgfx::isValid(uLightDir))
+    {
+        bgfx::destroy(uLightDir);
+    }
+    if (bgfx::isValid(uLightColor))
+    {
+        bgfx::destroy(uLightColor);
+    }
+    if (bgfx::isValid(uCameraPos))
+    {
+        bgfx::destroy(uCameraPos);
+    }
+    if (bgfx::isValid(uMaterial))
+    {
+        bgfx::destroy(uMaterial);
+    }
     if (bgfx::isValid(meshProgram))
     {
         bgfx::destroy(meshProgram);
