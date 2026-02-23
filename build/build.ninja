@@ -51,12 +51,62 @@ build cmake_object_order_depends_target_segmesh: phony || cmake_object_order_dep
 
 build CMakeFiles/segmesh.dir/src/main.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/src/main.cpp || cmake_object_order_depends_target_segmesh
   CONFIG = Release
-  DEFINES = -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
   DEP_FILE = CMakeFiles/segmesh.dir/src/main.cpp.o.d
   FLAGS = -O3 -DNDEBUG -std=gnu++20
-  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
   OBJECT_DIR = CMakeFiles/segmesh.dir
   OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/src
+  TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
+
+build CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty/dear-imgui/imgui.cpp || cmake_object_order_depends_target_segmesh
+  CONFIG = Release
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEP_FILE = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=gnu++20
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  OBJECT_DIR = CMakeFiles/segmesh.dir
+  OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui
+  TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
+
+build CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp || cmake_object_order_depends_target_segmesh
+  CONFIG = Release
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEP_FILE = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=gnu++20
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  OBJECT_DIR = CMakeFiles/segmesh.dir
+  OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui
+  TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
+
+build CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_tables.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty/dear-imgui/imgui_tables.cpp || cmake_object_order_depends_target_segmesh
+  CONFIG = Release
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEP_FILE = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_tables.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=gnu++20
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  OBJECT_DIR = CMakeFiles/segmesh.dir
+  OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui
+  TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
+
+build CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp || cmake_object_order_depends_target_segmesh
+  CONFIG = Release
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEP_FILE = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=gnu++20
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  OBJECT_DIR = CMakeFiles/segmesh.dir
+  OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui
+  TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
+
+build CMakeFiles/segmesh.dir/submods/bgfx/examples/common/imgui/imgui.cpp.o: CXX_COMPILER__segmesh_unscanned_Release /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui/imgui.cpp || cmake_object_order_depends_target_segmesh
+  CONFIG = Release
+  DEFINES = -DBX_CONFIG_DEBUG=0 -DGLFW_EXPOSE_NATIVE_WAYLAND -DGLFW_EXPOSE_NATIVE_X11 -DGLFW_INCLUDE_NONE
+  DEP_FILE = CMakeFiles/segmesh.dir/submods/bgfx/examples/common/imgui/imgui.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=gnu++20
+  INCLUDES = -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/3rdparty -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common -I/home/csabi/Documents/Önlab/SegMesh/submods/bgfx/examples/common/imgui -I/home/csabi/Documents/Önlab/SegMesh/submods/glfw/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bx/include -isystem /home/csabi/Documents/Önlab/SegMesh/submods/bimg/include
+  OBJECT_DIR = CMakeFiles/segmesh.dir
+  OBJECT_FILE_DIR = CMakeFiles/segmesh.dir/submods/bgfx/examples/common/imgui
   TARGET_SUPPORT_DIR = CMakeFiles/segmesh.dir
 
 
@@ -67,7 +117,7 @@ build CMakeFiles/segmesh.dir/src/main.cpp.o: CXX_COMPILER__segmesh_unscanned_Rel
 #############################################
 # Link the executable segmesh
 
-build segmesh: CXX_EXECUTABLE_LINKER__segmesh_Release CMakeFiles/segmesh.dir/src/main.cpp.o | submods/glfw/src/libglfw3.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbgfxRelease.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbxRelease.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbimgRelease.a /usr/lib/librt.a /usr/lib/libm.so || submods/glfw/src/libglfw3.a
+build segmesh: CXX_EXECUTABLE_LINKER__segmesh_Release CMakeFiles/segmesh.dir/src/main.cpp.o CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui.cpp.o CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp.o CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_tables.cpp.o CMakeFiles/segmesh.dir/submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp.o CMakeFiles/segmesh.dir/submods/bgfx/examples/common/imgui/imgui.cpp.o | submods/glfw/src/libglfw3.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbgfxRelease.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbxRelease.a /home/csabi/Documents/Önlab/SegMesh/submods/bgfx/.build/linux64_gcc/bin/libbimgRelease.a /usr/lib/librt.a /usr/lib/libm.so || submods/glfw/src/libglfw3.a
   CONFIG = Release
   DEP_FILE = CMakeFiles/segmesh.dir/link.d
   FLAGS = -O3 -DNDEBUG

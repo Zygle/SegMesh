@@ -110,10 +110,18 @@ target_include_directories(bimg INTERFACE "${BIMG_DIR}/include")
 # -------------------------
 add_executable(segmesh
   src/main.cpp
+  submods/bgfx/3rdparty/dear-imgui/imgui.cpp
+  submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp
+  submods/bgfx/3rdparty/dear-imgui/imgui_tables.cpp
+  submods/bgfx/3rdparty/dear-imgui/imgui_widgets.cpp
+  submods/bgfx/examples/common/imgui/imgui.cpp
 )
 
 target_include_directories(segmesh PRIVATE
   "${BGFX_DIR}/include"
+  "${BGFX_DIR}/3rdparty"
+  "${BGFX_DIR}/examples/common"
+  "${BGFX_DIR}/examples/common/imgui"
   "${BX_DIR}/include"
   "${BIMG_DIR}/include"
 )
@@ -123,6 +131,8 @@ target_compile_definitions(segmesh PRIVATE
   GLFW_INCLUDE_NONE
   GLFW_EXPOSE_NATIVE_WAYLAND
   GLFW_EXPOSE_NATIVE_X11
+  $<$<CONFIG:Debug>:BX_CONFIG_DEBUG=1>
+  $<$<NOT:$<CONFIG:Debug>>:BX_CONFIG_DEBUG=0>
 )
 
 target_link_libraries(segmesh PRIVATE
