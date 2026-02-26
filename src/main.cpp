@@ -603,8 +603,6 @@ int main(int argc, char** argv)
     {
         const auto defaultObj = findFirstExisting({
             "assets/model.obj",
-            "submods/bgfx/examples/assets/meshes/bunny.obj",
-            "../submods/bgfx/examples/assets/meshes/bunny.obj",
         });
 
         if (!defaultObj.has_value())
@@ -783,7 +781,6 @@ int main(int argc, char** argv)
     float modelRotation = 0.0f;
     float rotateSpeed = 0.8f;
     bool autoRotate = true;
-    bool wireframe = false;
     float baseColor[3] = {0.78f, 0.78f, 0.78f};
     float lightDirection[3] = {-0.45f, -0.9f, -0.25f};
     float lightColor[3] = {1.0f, 0.98f, 0.95f};
@@ -867,10 +864,7 @@ int main(int argc, char** argv)
             | BGFX_STATE_WRITE_Z
             | BGFX_STATE_DEPTH_TEST_LESS
             | BGFX_STATE_MSAA;
-        if (wireframe)
-        {
-            state |= BGFX_STATE_PT_LINES;
-        }
+
         bgfx::setState(state);
         bgfx::submit(0, meshProgram);
 
@@ -976,7 +970,6 @@ int main(int argc, char** argv)
         ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
         ImGui::SliderFloat("Specular", &specularStrength, 0.0f, 1.0f);
         ImGui::SliderFloat("Shininess", &shininess, 8.0f, 256.0f);
-        ImGui::Checkbox("Wireframe", &wireframe);
         ImGui::End();
 
         imguiEndFrame();
