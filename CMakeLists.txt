@@ -120,6 +120,10 @@ target_include_directories(bimg INTERFACE "${BIMG_DIR}/include")
 # main app
 # -------------------------
 add_executable(segmesh
+  src/mesh_types.cpp
+  src/obj_loader.cpp
+  src/renderer.cpp
+  src/ui_panel.cpp
   src/main.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp

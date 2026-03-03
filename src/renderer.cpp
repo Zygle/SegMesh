@@ -1,0 +1,376 @@
+#include "renderer.h"
+
+#include <bgfx/platform.h>
+#include <GLFW/glfw3native.h>
+#include <bx/math.h>
+#include <wayland-client-core.h>
+
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace
+{
+std::optional<std::filesystem::path> findFirstExisting(const std::vector<std::filesystem::path>& candidates)
+{
+    for (const std::filesystem::path& path : candidates)
+    {
+        if (std::filesystem::exists(path))
+        {
+            return path;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::vector<uint8_t> > readBinaryFile(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input)
+    {
+        return std::nullopt;
+    }
+
+    const std::streamsize size = input.tellg();
+    if (size <= 0)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> bytes(static_cast<std::size_t>(size));
+    input.seekg(0, std::ios::beg);
+    if (!input.read(reinterpret_cast<char*>(bytes.data()), size))
+    {
+        return std::nullopt;
+    }
+
+    return bytes;
+}
+
+bgfx::ShaderHandle loadShaderFromFile(const std::filesystem::path& path)
+{
+    const auto bytes = readBinaryFile(path);
+    if (!bytes.has_value())
+    {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    const bgfx::Memory* memory = bgfx::copy(bytes->data(), static_cast<uint32_t>(bytes->size()));
+    bgfx::ShaderHandle shader = bgfx::createShader(memory);
+    if (bgfx::isValid(shader))
+    {
+        const std::string name = path.filename().string();
+        bgfx::setName(shader, name.c_str());
+    }
+
+    return shader;
+}
+
+segmesh::Float3 normalize(const segmesh::Float3& v, const segmesh::Float3& fallback)
+{
+    const float lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (lenSq < 1.0e-12f)
+    {
+        return fallback;
+    }
+
+    const float invLen = 1.0f / std::sqrt(lenSq);
+    return {v.x * invLen, v.y * invLen, v.z * invLen};
+}
+
+void destroyUniform(bgfx::UniformHandle& uniform)
+{
+    if (bgfx::isValid(uniform))
+    {
+        bgfx::destroy(uniform);
+    }
+
+    uniform = BGFX_INVALID_HANDLE;
+}
+
+void destroyGpuMeshHandles(segmesh::GpuMesh& gpuMesh)
+{
+    if (bgfx::isValid(gpuMesh.vbh))
+    {
+        bgfx::destroy(gpuMesh.vbh);
+    }
+
+    if (bgfx::isValid(gpuMesh.ibh))
+    {
+        bgfx::destroy(gpuMesh.ibh);
+    }
+
+    gpuMesh.vbh = BGFX_INVALID_HANDLE;
+    gpuMesh.ibh = BGFX_INVALID_HANDLE;
+    gpuMesh.indexCount = 0;
+}
+}
+
+namespace segmesh
+{
+Renderer::~Renderer()
+{
+    shutdown();
+}
+
+bool Renderer::initialize(GLFWwindow* window, uint32_t width, uint32_t height, std::string& error)
+{
+    shutdown();
+
+    if (window == nullptr)
+    {
+        error = "Renderer initialization received null window.";
+        return false;
+    }
+
+    wl_display* display = glfwGetWaylandDisplay();
+    wl_surface* surface = glfwGetWaylandWindow(window);
+    if (!display || !surface)
+    {
+        error = "Wayland backend is required by this sample.";
+        return false;
+    }
+
+    bgfx::renderFrame();
+
+    bgfx::PlatformData platformData{};
+    platformData.ndt = display;
+    platformData.nwh = surface;
+    platformData.context = nullptr;
+    platformData.backBuffer = nullptr;
+    platformData.backBufferDS = nullptr;
+    platformData.type = bgfx::NativeWindowHandleType::Wayland;
+
+    bgfx::Init init{};
+    init.type = bgfx::RendererType::Vulkan;
+    init.platformData = platformData;
+    init.resolution.width = width;
+    init.resolution.height = height;
+    init.resolution.reset = BGFX_RESET_VSYNC;
+
+    if (!bgfx::init(init))
+    {
+        error = "bgfx::init failed";
+        return false;
+    }
+    initialized_ = true;
+
+    const auto shaderDir = findFirstExisting({
+        "build/shaders/spirv",
+        "shaders/spirv",
+        "../build/shaders/spirv",
+        "../../build/shaders/spirv",
+    });
+    if (!shaderDir.has_value())
+    {
+        error = "Unable to find bgfx runtime shader directory.";
+        shutdown();
+        return false;
+    }
+
+    bgfx::ShaderHandle vsh = loadShaderFromFile(*shaderDir / "vs_triangle.bin");
+    bgfx::ShaderHandle fsh = loadShaderFromFile(*shaderDir / "fs_triangle.bin");
+    if (!bgfx::isValid(vsh) || !bgfx::isValid(fsh))
+    {
+        if (bgfx::isValid(vsh))
+        {
+            bgfx::destroy(vsh);
+        }
+        if (bgfx::isValid(fsh))
+        {
+            bgfx::destroy(fsh);
+        }
+        error = "Failed to load shader binaries from: " + shaderDir->string();
+        shutdown();
+        return false;
+    }
+
+    meshProgram_ = bgfx::createProgram(vsh, fsh, true);
+    if (!bgfx::isValid(meshProgram_))
+    {
+        error = "Failed to create mesh program.";
+        shutdown();
+        return false;
+    }
+
+    MeshVertex::initLayout();
+
+    uBaseColor_ = bgfx::createUniform("u_baseColor", bgfx::UniformType::Vec4);
+    uLightDir_ = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
+    uLightColor_ = bgfx::createUniform("u_lightColor", bgfx::UniformType::Vec4);
+    uCameraPos_ = bgfx::createUniform("u_cameraPos", bgfx::UniformType::Vec4);
+    uMaterial_ = bgfx::createUniform("u_material", bgfx::UniformType::Vec4);
+
+    if (!bgfx::isValid(uBaseColor_) || !bgfx::isValid(uLightDir_) || !bgfx::isValid(uLightColor_)
+        || !bgfx::isValid(uCameraPos_) || !bgfx::isValid(uMaterial_))
+    {
+        error = "Failed to create one or more renderer uniforms.";
+        shutdown();
+        return false;
+    }
+
+    return true;
+}
+
+bool Renderer::uploadMesh(const CpuMesh& mesh, GpuMesh& outMesh, std::string& error)
+{
+    const bgfx::Memory* vmem = bgfx::copy(
+        mesh.vertices.data(),
+        static_cast<uint32_t>(mesh.vertices.size() * sizeof(MeshVertex))
+    );
+    outMesh.vbh = bgfx::createVertexBuffer(vmem, MeshVertex::layout);
+
+    const bgfx::Memory* imem = bgfx::copy(
+        mesh.indices.data(),
+        static_cast<uint32_t>(mesh.indices.size() * sizeof(uint32_t))
+    );
+    outMesh.ibh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+    outMesh.indexCount = static_cast<uint32_t>(mesh.indices.size());
+
+    if (!bgfx::isValid(outMesh.vbh) || !bgfx::isValid(outMesh.ibh))
+    {
+        error = "Failed to create bgfx mesh buffers.";
+        destroyGpuMeshHandles(outMesh);
+        return false;
+    }
+
+    return true;
+}
+
+bool Renderer::loadMesh(const CpuMesh& mesh, std::string& error)
+{
+    if (!initialized_)
+    {
+        error = "Renderer is not initialized.";
+        return false;
+    }
+
+    GpuMesh newMesh{};
+    if (!uploadMesh(mesh, newMesh, error))
+    {
+        return false;
+    }
+
+    destroyGpuMesh();
+    gpuMesh_ = newMesh;
+    return true;
+}
+
+void Renderer::resize(uint32_t width, uint32_t height)
+{
+    if (!initialized_ || width == 0 || height == 0)
+    {
+        return;
+    }
+
+    bgfx::reset(width, height, BGFX_RESET_VSYNC);
+}
+
+void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState)
+{
+    if (!initialized_ || !bgfx::isValid(meshProgram_) || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
+    {
+        return;
+    }
+
+    const bgfx::Caps* caps = bgfx::getCaps();
+
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303040ff, 1.0f, 0);
+    bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+
+    const float eyeX = std::sin(uiState.cameraYaw) * std::cos(uiState.cameraPitch) * uiState.cameraDistance;
+    const float eyeY = std::sin(uiState.cameraPitch) * uiState.cameraDistance;
+    const float eyeZ = std::cos(uiState.cameraYaw) * std::cos(uiState.cameraPitch) * uiState.cameraDistance;
+
+    const bx::Vec3 eye{eyeX, eyeY, eyeZ};
+    const bx::Vec3 at{0.0f, 0.0f, 0.0f};
+    float view[16];
+    bx::mtxLookAt(view, eye, at);
+
+    float proj[16];
+    bx::mtxProj(proj, 60.0f, static_cast<float>(width) / static_cast<float>(height), 0.01f, 100.0f, caps->homogeneousDepth);
+    bgfx::setViewTransform(0, view, proj);
+
+    float model[16];
+    bx::mtxRotateY(model, modelRotation);
+    bgfx::setTransform(model);
+    bgfx::setVertexBuffer(0, gpuMesh_.vbh);
+    bgfx::setIndexBuffer(gpuMesh_.ibh, 0, gpuMesh_.indexCount);
+
+    const Float3 lightDir = normalize(
+        {uiState.lightDirection[0], uiState.lightDirection[1], uiState.lightDirection[2]},
+        {-0.45f, -0.9f, -0.25f}
+    );
+    const float baseColorUniform[4] = {uiState.baseColor[0], uiState.baseColor[1], uiState.baseColor[2], 1.0f};
+    const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, uiState.lightIntensity};
+    const float lightColorUniform[4] = {uiState.lightColor[0], uiState.lightColor[1], uiState.lightColor[2], 1.0f};
+    const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
+    const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 0.0f};
+
+    bgfx::setUniform(uBaseColor_, baseColorUniform);
+    bgfx::setUniform(uLightDir_, lightDirUniform);
+    bgfx::setUniform(uLightColor_, lightColorUniform);
+    bgfx::setUniform(uCameraPos_, cameraPosUniform);
+    bgfx::setUniform(uMaterial_, materialUniform);
+
+    const uint64_t state = BGFX_STATE_WRITE_RGB
+        | BGFX_STATE_WRITE_A
+        | BGFX_STATE_WRITE_Z
+        | BGFX_STATE_DEPTH_TEST_LESS
+        | BGFX_STATE_MSAA;
+
+    bgfx::setState(state);
+    bgfx::submit(0, meshProgram_);
+}
+
+void Renderer::frame()
+{
+    if (initialized_)
+    {
+        bgfx::frame();
+    }
+}
+
+const char* Renderer::rendererName() const
+{
+    if (!initialized_)
+    {
+        return "Unavailable";
+    }
+
+    return bgfx::getRendererName(bgfx::getRendererType());
+}
+
+void Renderer::destroyGpuMesh()
+{
+    destroyGpuMeshHandles(gpuMesh_);
+}
+
+void Renderer::shutdown()
+{
+    destroyGpuMesh();
+
+    destroyUniform(uBaseColor_);
+    destroyUniform(uLightDir_);
+    destroyUniform(uLightColor_);
+    destroyUniform(uCameraPos_);
+    destroyUniform(uMaterial_);
+
+    if (bgfx::isValid(meshProgram_))
+    {
+        bgfx::destroy(meshProgram_);
+    }
+    meshProgram_ = BGFX_INVALID_HANDLE;
+
+    if (initialized_)
+    {
+        bgfx::shutdown();
+        initialized_ = false;
+    }
+}
+}
