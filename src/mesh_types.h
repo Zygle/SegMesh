@@ -30,6 +30,8 @@ struct CpuMesh
 {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<Float3> faceCentroids;
+    std::vector<float> faceAreas;
 };
 
 struct GpuMesh

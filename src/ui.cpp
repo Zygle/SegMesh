@@ -1,23 +1,25 @@
-#include "ui_panel.h"
-
+#include "ui.h"
 #include "imgui.h"
 
 namespace segmesh
 {
-int drawRendererPanel(
+RendererUiActions drawRendererPanel(
     const std::vector<std::filesystem::path>& modelPaths,
     int selectedModelIndex,
     const std::filesystem::path& objPath,
     uint32_t vertexCount,
     uint32_t triangleCount,
+    uint32_t seedTriangleCount,
     const char* rendererName,
     RendererUiState& uiState
 )
 {
+    RendererUiActions actions{};
+    actions.pendingModelIndex = selectedModelIndex;
+
     ImGui::Begin("Renderer");
 
     const std::string activeModelLabel = objPath.filename().string();
-    int pendingModelIndex = selectedModelIndex;
     if (ImGui::BeginCombo("Model", activeModelLabel.c_str()))
     {
         for (int i = 0; i < static_cast<int>(modelPaths.size()); ++i)
@@ -26,7 +28,7 @@ int drawRendererPanel(
             const std::string itemLabel = modelPaths[static_cast<std::size_t>(i)].filename().string();
             if (ImGui::Selectable(itemLabel.c_str(), selected))
             {
-                pendingModelIndex = i;
+                actions.pendingModelIndex = i;
             }
 
             if (selected)
@@ -42,6 +44,17 @@ int drawRendererPanel(
     ImGui::Text("Available models: %u", static_cast<uint32_t>(modelPaths.size()));
     ImGui::Text("Vertices: %u", vertexCount);
     ImGui::Text("Triangles: %u", triangleCount);
+    ImGui::Separator();
+    if (ImGui::Button("Place random seed"))
+    {
+        actions.requestRandomSeed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear seeds"))
+    {
+        actions.requestClearSeed = true;
+    }
+    ImGui::Text("Seed count: %u", seedTriangleCount);
     if (!uiState.modelLoadError.empty())
     {
         ImGui::Separator();
@@ -63,6 +76,6 @@ int drawRendererPanel(
     ImGui::SliderFloat("Shininess", &uiState.shininess, 8.0f, 256.0f);
     ImGui::End();
 
-    return pendingModelIndex;
+    return actions;
 }
 }

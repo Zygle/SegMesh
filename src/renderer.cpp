@@ -11,6 +11,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -258,7 +259,59 @@ bool Renderer::loadMesh(const CpuMesh& mesh, std::string& error)
 
     destroyGpuMesh();
     gpuMesh_ = newMesh;
+    clearSeedTriangle();
     return true;
+}
+
+bool Renderer::setSeedTriangle(const CpuMesh& mesh, uint32_t triangleIndex, std::string& error)
+{
+    if (!initialized_ || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
+    {
+        error = "Renderer mesh must be loaded before selecting a seed triangle.";
+        return false;
+    }
+
+    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (triangleIndex >= triangleCount)
+    {
+        error = "Seed triangle index is out of range.";
+        return false;
+    }
+
+    const uint32_t offset = triangleIndex * 3;
+    std::vector<uint32_t> newSeedTriangleIndices = seedTriangleIndices_;
+    newSeedTriangleIndices.push_back(mesh.indices[offset + 0]);
+    newSeedTriangleIndices.push_back(mesh.indices[offset + 1]);
+    newSeedTriangleIndices.push_back(mesh.indices[offset + 2]);
+
+    const bgfx::Memory* imem = bgfx::copy(
+        newSeedTriangleIndices.data(),
+        static_cast<uint32_t>(newSeedTriangleIndices.size() * sizeof(uint32_t))
+    );
+    const bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+    if (!bgfx::isValid(ibh))
+    {
+        error = "Failed to create seed triangle index buffer.";
+        return false;
+    }
+
+    if (bgfx::isValid(seedTriangleIbh_))
+    {
+        bgfx::destroy(seedTriangleIbh_);
+    }
+    seedTriangleIbh_ = ibh;
+    seedTriangleIndices_ = std::move(newSeedTriangleIndices);
+    return true;
+}
+
+void Renderer::clearSeedTriangle()
+{
+    if (bgfx::isValid(seedTriangleIbh_))
+    {
+        bgfx::destroy(seedTriangleIbh_);
+    }
+    seedTriangleIbh_ = BGFX_INVALID_HANDLE;
+    seedTriangleIndices_.clear();
 }
 
 void Renderer::resize(uint32_t width, uint32_t height)
@@ -326,6 +379,27 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
 
     bgfx::setState(state);
     bgfx::submit(0, meshProgram_);
+
+    if (bgfx::isValid(seedTriangleIbh_))
+    {
+        const float seedColorUniform[4] = {1.0f, 0.12f, 0.12f, 1.0f};
+
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, gpuMesh_.vbh);
+        bgfx::setIndexBuffer(seedTriangleIbh_, 0, static_cast<uint32_t>(seedTriangleIndices_.size()));
+        bgfx::setUniform(uBaseColor_, seedColorUniform);
+        bgfx::setUniform(uLightDir_, lightDirUniform);
+        bgfx::setUniform(uLightColor_, lightColorUniform);
+        bgfx::setUniform(uCameraPos_, cameraPosUniform);
+        bgfx::setUniform(uMaterial_, materialUniform);
+
+        const uint64_t seedState = BGFX_STATE_WRITE_RGB
+            | BGFX_STATE_WRITE_A
+            | BGFX_STATE_DEPTH_TEST_LEQUAL
+            | BGFX_STATE_MSAA;
+        bgfx::setState(seedState);
+        bgfx::submit(0, meshProgram_);
+    }
 }
 
 void Renderer::frame()
@@ -353,6 +427,7 @@ void Renderer::destroyGpuMesh()
 
 void Renderer::shutdown()
 {
+    clearSeedTriangle();
     destroyGpuMesh();
 
     destroyUniform(uBaseColor_);

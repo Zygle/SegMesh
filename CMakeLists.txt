@@ -36,6 +36,9 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(submods/glfw)
 
+find_package(Eigen3 REQUIRED NO_MODULE)
+find_package(OpenMesh REQUIRED)
+
 # -------------------------
 # bgfx / bx / bimg headers
 # -------------------------
@@ -123,7 +126,7 @@ add_executable(segmesh
   src/mesh_types.cpp
   src/obj_loader.cpp
   src/renderer.cpp
-  src/ui_panel.cpp
+  src/ui.cpp
   src/main.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui_draw.cpp
@@ -188,6 +191,9 @@ target_include_directories(segmesh PRIVATE
   "${BX_DIR}/include"
   "${BIMG_DIR}/include"
 )
+if(OPENMESH_INCLUDE_DIRS)
+  target_include_directories(segmesh PRIVATE ${OPENMESH_INCLUDE_DIRS})
+endif()
 
 # Native window handle access for Wayland (and optional X11 fallback)
 target_compile_definitions(segmesh PRIVATE
@@ -203,7 +209,18 @@ target_link_libraries(segmesh PRIVATE
   bgfx
   bx
   bimg
+  Eigen3::Eigen
 )
+if(TARGET OpenMeshCore)
+  target_link_libraries(segmesh PRIVATE OpenMeshCore)
+  if(TARGET OpenMeshTools)
+    target_link_libraries(segmesh PRIVATE OpenMeshTools)
+  endif()
+elseif(OPENMESH_LIBRARIES)
+  target_link_libraries(segmesh PRIVATE ${OPENMESH_LIBRARIES})
+else()
+  message(FATAL_ERROR "OpenMesh was found, but CMake did not expose OpenMesh link targets/libraries.")
+endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)

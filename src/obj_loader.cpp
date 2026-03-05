@@ -1,51 +1,45 @@
 #include "obj_loader.h"
 
+#include <Eigen/Dense>
+#include <OpenMesh/Core/IO/MeshIO.hh>
+#include <OpenMesh/Core/Mesh/TriMesh_ArrayKernelT.hh>
+
 #include <algorithm>
+#include <array>
 #include <cctype>
-#include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <limits>
-#include <sstream>
-#include <unordered_map>
+#include <string>
+#include <vector>
 
 namespace
 {
+using OpenMeshTriMesh = OpenMesh::TriMesh_ArrayKernelT<>;
 using segmesh::Float3;
 using segmesh::MeshVertex;
 
-Float3 add(const Float3& a, const Float3& b)
+Eigen::Vector3f toEigen(const OpenMeshTriMesh::Point& point)
 {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
+    return {point[0], point[1], point[2]};
 }
 
-Float3 sub(const Float3& a, const Float3& b)
+Float3 toFloat3(const Eigen::Vector3f& v)
 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
+    return {v.x(), v.y(), v.z()};
 }
 
-Float3 cross(const Float3& a, const Float3& b)
+Eigen::Vector3f normalizeSafe(const Eigen::Vector3f& v, const Eigen::Vector3f& fallback = {0.0f, 1.0f, 0.0f})
 {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
-
-Float3 normalize(const Float3& v, const Float3& fallback = {0.0f, 1.0f, 0.0f})
-{
-    const float lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
-    if (lenSq < 1.0e-12f)
+    const float len = v.norm();
+    if (len < 1.0e-12f)
     {
         return fallback;
     }
 
-    const float invLen = 1.0f / std::sqrt(lenSq);
-    return {v.x * invLen, v.y * invLen, v.z * invLen};
+    return v / len;
 }
 
-uint32_t packNormal(const Float3& normal)
+uint32_t packNormal(const Eigen::Vector3f& normal)
 {
     auto toByte = [](float value) -> uint8_t
     {
@@ -53,84 +47,10 @@ uint32_t packNormal(const Float3& normal)
         return static_cast<uint8_t>(normalized * 255.0f + 0.5f);
     };
 
-    const uint32_t nx = toByte(normal.x);
-    const uint32_t ny = toByte(normal.y);
-    const uint32_t nz = toByte(normal.z);
+    const uint32_t nx = toByte(normal.x());
+    const uint32_t ny = toByte(normal.y());
+    const uint32_t nz = toByte(normal.z());
     return nx | (ny << 8) | (nz << 16) | (0xffu << 24);
-}
-
-struct VertexKey
-{
-    int position = -1;
-    int normal = -1;
-
-    bool operator==(const VertexKey& rhs) const
-    {
-        return position == rhs.position && normal == rhs.normal;
-    }
-};
-
-struct VertexKeyHash
-{
-    std::size_t operator()(const VertexKey& key) const
-    {
-        const std::size_t p = static_cast<std::size_t>(key.position + 1);
-        const std::size_t n = static_cast<std::size_t>(key.normal + 2);
-        return (p * 73856093u) ^ (n * 19349663u);
-    }
-};
-
-bool parseFaceToken(const std::string& token, int& outPosition, int& outNormal)
-{
-    outPosition = 0;
-    outNormal = 0;
-
-    try
-    {
-        const std::size_t firstSlash = token.find('/');
-        if (firstSlash == std::string::npos)
-        {
-            outPosition = std::stoi(token);
-            return true;
-        }
-
-        outPosition = std::stoi(token.substr(0, firstSlash));
-
-        const std::size_t secondSlash = token.find('/', firstSlash + 1);
-        if (secondSlash == std::string::npos)
-        {
-            return true;
-        }
-
-        if (secondSlash + 1 < token.size())
-        {
-            outNormal = std::stoi(token.substr(secondSlash + 1));
-        }
-
-        return true;
-    }
-    catch (...)
-    {
-        return false;
-    }
-}
-
-bool resolveObjIndex(int rawIndex, std::size_t count, int& outIndex)
-{
-    if (rawIndex > 0)
-    {
-        outIndex = rawIndex - 1;
-    }
-    else if (rawIndex < 0)
-    {
-        outIndex = static_cast<int>(count) + rawIndex;
-    }
-    else
-    {
-        return false;
-    }
-
-    return outIndex >= 0 && outIndex < static_cast<int>(count);
 }
 } // namespace
 
@@ -138,215 +58,122 @@ namespace segmesh
 {
 bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::string& error)
 {
-    std::ifstream input(filePath);
-    if (!input)
+    outMesh = CpuMesh{};
+    error.clear();
+
+    OpenMeshTriMesh mesh;
+    mesh.request_vertex_normals();
+    mesh.request_face_normals();
+
+    OpenMesh::IO::Options ioOptions;
+    ioOptions += OpenMesh::IO::Options::VertexNormal;
+    if (!OpenMesh::IO::read_mesh(mesh, filePath.string(), ioOptions))
     {
-        error = "Unable to open OBJ file: " + filePath.string();
+        error = "Unable to open OBJ file with OpenMesh: " + filePath.string();
         return false;
     }
 
-    std::vector<Float3> positions;
-    std::vector<Float3> normals;
-
-    std::unordered_map<VertexKey, uint32_t, VertexKeyHash> vertexMap;
-    std::vector<Float3> uniquePositions;
-    std::vector<Float3> accumulatedNormals;
-    std::vector<bool> hasImportedNormal;
-
-    auto makeVertex = [&](int positionIndex, int normalIndex) -> uint32_t
+    if (mesh.n_vertices() == 0 || mesh.n_faces() == 0)
     {
-        const VertexKey key{positionIndex, normalIndex};
-        const auto it = vertexMap.find(key);
-        if (it != vertexMap.end())
-        {
-            return it->second;
-        }
+        error = "OBJ has no renderable geometry: " + filePath.string();
+        return false;
+    }
 
-        const Float3& p = positions[static_cast<std::size_t>(positionIndex)];
-        const bool hasNormal = normalIndex >= 0;
-        const Float3 normal = hasNormal
-            ? normalize(normals[static_cast<std::size_t>(normalIndex)])
-            : Float3{0.0f, 1.0f, 0.0f};
-
-        MeshVertex v{};
-        v.x = p.x;
-        v.y = p.y;
-        v.z = p.z;
-        v.normal = packNormal(normal);
-
-        const uint32_t newIndex = static_cast<uint32_t>(outMesh.vertices.size());
-        outMesh.vertices.push_back(v);
-        uniquePositions.push_back(p);
-        accumulatedNormals.push_back({0.0f, 0.0f, 0.0f});
-        hasImportedNormal.push_back(hasNormal);
-        vertexMap.emplace(key, newIndex);
-        return newIndex;
-    };
-
-    std::string line;
-    uint32_t lineNumber = 0;
-    while (std::getline(input, line))
+    if (!ioOptions.check(OpenMesh::IO::Options::VertexNormal))
     {
-        ++lineNumber;
+        mesh.update_face_normals();
+        mesh.update_vertex_normals();
+    }
+    else
+    {
+        mesh.update_face_normals();
+    }
 
-        const std::size_t commentPos = line.find('#');
-        if (commentPos != std::string::npos)
-        {
-            line.erase(commentPos);
-        }
+    const std::size_t vertexCount = mesh.n_vertices();
+    Eigen::MatrixXf positions(3, vertexCount);
 
-        std::istringstream iss(line);
-        std::string type;
-        iss >> type;
-        if (type.empty())
-        {
-            continue;
-        }
+    for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
+    {
+        positions.col(vh.idx()) = toEigen(mesh.point(vh));
+    }
 
-        if (type == "v")
+    const Eigen::Vector3f minPos = positions.rowwise().minCoeff();
+    const Eigen::Vector3f maxPos = positions.rowwise().maxCoeff();
+    const Eigen::Vector3f center = 0.5f * (minPos + maxPos);
+    const float maxExtent = (maxPos - minPos).maxCoeff();
+    const float scale = maxExtent > 1.0e-6f ? (2.0f / maxExtent) : 1.0f;
+
+    positions.colwise() -= center;
+    positions *= scale;
+
+    std::vector<Eigen::Vector3f> preprocessedPositions(vertexCount);
+    for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
+    {
+        preprocessedPositions[vh.idx()] = positions.col(vh.idx());
+    }
+
+    outMesh.vertices.reserve(vertexCount);
+    std::vector<uint32_t> vertexMap(vertexCount, std::numeric_limits<uint32_t>::max());
+
+    for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
+    {
+        const Eigen::Vector3f p = preprocessedPositions[vh.idx()];
+        const Eigen::Vector3f n = normalizeSafe(toEigen(mesh.normal(vh)));
+
+        MeshVertex vertex{};
+        vertex.x = p.x();
+        vertex.y = p.y();
+        vertex.z = p.z();
+        vertex.normal = packNormal(n);
+
+        const uint32_t index = static_cast<uint32_t>(outMesh.vertices.size());
+        outMesh.vertices.push_back(vertex);
+        vertexMap[vh.idx()] = index;
+    }
+
+    outMesh.indices.reserve(mesh.n_faces() * 3);
+    outMesh.faceCentroids.reserve(mesh.n_faces());
+    outMesh.faceAreas.reserve(mesh.n_faces());
+
+    for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
+    {
+        std::array<OpenMeshTriMesh::VertexHandle, 3> faceVertices{};
+        std::size_t corner = 0;
+        for (auto fvIt = mesh.cfv_iter(fh); fvIt.is_valid(); ++fvIt)
         {
-            Float3 p{};
-            if (!(iss >> p.x >> p.y >> p.z))
+            if (corner < faceVertices.size())
             {
-                error = "Malformed vertex at line " + std::to_string(lineNumber);
-                return false;
+                faceVertices[corner] = *fvIt;
             }
-            positions.push_back(p);
-            continue;
+            ++corner;
         }
 
-        if (type == "vn")
-        {
-            Float3 n{};
-            if (!(iss >> n.x >> n.y >> n.z))
-            {
-                error = "Malformed normal at line " + std::to_string(lineNumber);
-                return false;
-            }
-            normals.push_back(n);
-            continue;
-        }
-
-        if (type != "f")
-        {
-            continue;
-        }
-
-        std::vector<std::pair<int, int> > face;
-        std::string token;
-        while (iss >> token)
-        {
-            int rawPosition = 0;
-            int rawNormal = 0;
-            if (!parseFaceToken(token, rawPosition, rawNormal))
-            {
-                error = "Malformed face token at line " + std::to_string(lineNumber) + ": " + token;
-                return false;
-            }
-
-            int positionIndex = -1;
-            if (!resolveObjIndex(rawPosition, positions.size(), positionIndex))
-            {
-                error = "Face position index out of range at line " + std::to_string(lineNumber);
-                return false;
-            }
-
-            int normalIndex = -1;
-            if (rawNormal != 0 && !resolveObjIndex(rawNormal, normals.size(), normalIndex))
-            {
-                error = "Face normal index out of range at line " + std::to_string(lineNumber);
-                return false;
-            }
-
-            face.emplace_back(positionIndex, normalIndex);
-        }
-
-        if (face.size() < 3)
+        if (corner != 3)
         {
             continue;
         }
 
-        for (std::size_t i = 1; i + 1 < face.size(); ++i)
-        {
-            const uint32_t i0 = makeVertex(face[0].first, face[0].second);
-            const uint32_t i1 = makeVertex(face[i].first, face[i].second);
-            const uint32_t i2 = makeVertex(face[i + 1].first, face[i + 1].second);
+        const uint32_t i0 = vertexMap[faceVertices[0].idx()];
+        const uint32_t i1 = vertexMap[faceVertices[1].idx()];
+        const uint32_t i2 = vertexMap[faceVertices[2].idx()];
+        outMesh.indices.push_back(i0);
+        outMesh.indices.push_back(i1);
+        outMesh.indices.push_back(i2);
 
-            outMesh.indices.push_back(i0);
-            outMesh.indices.push_back(i1);
-            outMesh.indices.push_back(i2);
+        const Eigen::Vector3f p0 = preprocessedPositions[faceVertices[0].idx()];
+        const Eigen::Vector3f p1 = preprocessedPositions[faceVertices[1].idx()];
+        const Eigen::Vector3f p2 = preprocessedPositions[faceVertices[2].idx()];
+        const Eigen::Vector3f centroid = (p0 + p1 + p2) / 3.0f;
+        const float area = 0.5f * ((p1 - p0).cross(p2 - p0)).norm();
 
-            const Float3& p0 = uniquePositions[static_cast<std::size_t>(i0)];
-            const Float3& p1 = uniquePositions[static_cast<std::size_t>(i1)];
-            const Float3& p2 = uniquePositions[static_cast<std::size_t>(i2)];
-            const Float3 faceNormal = normalize(cross(sub(p1, p0), sub(p2, p0)));
-
-            if (!hasImportedNormal[static_cast<std::size_t>(i0)])
-            {
-                accumulatedNormals[static_cast<std::size_t>(i0)] = add(accumulatedNormals[static_cast<std::size_t>(i0)], faceNormal);
-            }
-            if (!hasImportedNormal[static_cast<std::size_t>(i1)])
-            {
-                accumulatedNormals[static_cast<std::size_t>(i1)] = add(accumulatedNormals[static_cast<std::size_t>(i1)], faceNormal);
-            }
-            if (!hasImportedNormal[static_cast<std::size_t>(i2)])
-            {
-                accumulatedNormals[static_cast<std::size_t>(i2)] = add(accumulatedNormals[static_cast<std::size_t>(i2)], faceNormal);
-            }
-        }
+        outMesh.faceCentroids.push_back(toFloat3(centroid));
+        outMesh.faceAreas.push_back(area);
     }
 
     if (outMesh.vertices.empty() || outMesh.indices.empty())
     {
         error = "OBJ has no renderable geometry: " + filePath.string();
         return false;
-    }
-
-    for (std::size_t i = 0; i < outMesh.vertices.size(); ++i)
-    {
-        if (!hasImportedNormal[i])
-        {
-            const Float3 n = normalize(accumulatedNormals[i]);
-            outMesh.vertices[i].normal = packNormal(n);
-        }
-    }
-
-    Float3 minPos{
-        std::numeric_limits<float>::max(),
-        std::numeric_limits<float>::max(),
-        std::numeric_limits<float>::max(),
-    };
-    Float3 maxPos{
-        std::numeric_limits<float>::lowest(),
-        std::numeric_limits<float>::lowest(),
-        std::numeric_limits<float>::lowest(),
-    };
-
-    for (const MeshVertex& v : outMesh.vertices)
-    {
-        minPos.x = std::min(minPos.x, v.x);
-        minPos.y = std::min(minPos.y, v.y);
-        minPos.z = std::min(minPos.z, v.z);
-
-        maxPos.x = std::max(maxPos.x, v.x);
-        maxPos.y = std::max(maxPos.y, v.y);
-        maxPos.z = std::max(maxPos.z, v.z);
-    }
-
-    const Float3 center{
-        (minPos.x + maxPos.x) * 0.5f,
-        (minPos.y + maxPos.y) * 0.5f,
-        (minPos.z + maxPos.z) * 0.5f,
-    };
-
-    const float maxExtent = std::max({maxPos.x - minPos.x, maxPos.y - minPos.y, maxPos.z - minPos.z});
-    const float scale = maxExtent > 1.0e-6f ? (2.0f / maxExtent) : 1.0f;
-
-    for (MeshVertex& v : outMesh.vertices)
-    {
-        v.x = (v.x - center.x) * scale;
-        v.y = (v.y - center.y) * scale;
-        v.z = (v.z - center.z) * scale;
     }
 
     return true;

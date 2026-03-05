@@ -1,6 +1,6 @@
 #include "obj_loader.h"
 #include "renderer.h"
-#include "ui_panel.h"
+#include "ui.h"
 
 #include <GLFW/glfw3.h>
 
@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +29,70 @@ void onScroll(GLFWwindow*, double, double yoffset)
 void onChar(GLFWwindow*, unsigned int codepoint)
 {
     g_inputChar = static_cast<int>(codepoint);
+}
+
+std::optional<uint32_t> pickRandomSeedTriangle(
+    const segmesh::CpuMesh& mesh,
+    const std::vector<uint32_t>& seededTriangles,
+    std::mt19937& randomEngine
+)
+{
+    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (triangleCount == 0)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<bool> isSeeded(triangleCount, false);
+    uint32_t seededCount = 0;
+    for (const uint32_t triangleIndex : seededTriangles)
+    {
+        if (triangleIndex < triangleCount && !isSeeded[triangleIndex])
+        {
+            isSeeded[triangleIndex] = true;
+            ++seededCount;
+        }
+    }
+
+    if (seededCount >= triangleCount)
+    {
+        return std::nullopt;
+    }
+
+    if (mesh.faceAreas.size() == triangleCount)
+    {
+        std::vector<double> weights;
+        weights.reserve(mesh.faceAreas.size());
+
+        double areaSum = 0.0;
+        for (uint32_t i = 0; i < triangleCount; ++i)
+        {
+            const float area = mesh.faceAreas[static_cast<std::size_t>(i)];
+            if (isSeeded[i])
+            {
+                weights.push_back(0.0);
+                continue;
+            }
+
+            const double weight = (std::isfinite(area) && area > 0.0f) ? static_cast<double>(area) : 0.0;
+            weights.push_back(weight);
+            areaSum += weight;
+        }
+
+        if (areaSum > 0.0)
+        {
+            std::discrete_distribution<std::size_t> dist(weights.begin(), weights.end());
+            return static_cast<uint32_t>(dist(randomEngine));
+        }
+    }
+
+    std::uniform_int_distribution<uint32_t> dist(0, triangleCount - 1);
+    uint32_t candidate = dist(randomEngine);
+    while (isSeeded[candidate])
+    {
+        candidate = dist(randomEngine);
+    }
+    return candidate;
 }
 }
 
@@ -149,7 +215,9 @@ int main(int argc, char** argv)
     imguiCreate(18.0f);
 
     float modelRotation = 0.0f;
+    std::vector<uint32_t> selectedSeedTriangles;
     segmesh::RendererUiState uiState{};
+    std::mt19937 randomEngine(std::random_device{}());
 
     float previousTime = static_cast<float>(glfwGetTime());
     while (!glfwWindowShouldClose(window))
@@ -217,16 +285,18 @@ int main(int argc, char** argv)
             1
         );
 
-        const int pendingModelIndex = segmesh::drawRendererPanel(
+        const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
             modelPaths,
             selectedModelIndex,
             objPath,
             static_cast<uint32_t>(mesh.vertices.size()),
             static_cast<uint32_t>(mesh.indices.size() / 3),
+            static_cast<uint32_t>(selectedSeedTriangles.size()),
             renderer.rendererName(),
             uiState
         );
 
+        const int pendingModelIndex = uiActions.pendingModelIndex;
         if (pendingModelIndex != selectedModelIndex)
         {
             segmesh::CpuMesh newMesh{};
@@ -238,11 +308,41 @@ int main(int argc, char** argv)
                 objPath = newPath;
                 selectedModelIndex = pendingModelIndex;
                 modelRotation = 0.0f;
+                selectedSeedTriangles.clear();
                 uiState.modelLoadError.clear();
             }
             else
             {
                 uiState.modelLoadError = loadError;
+            }
+        }
+
+        if (uiActions.requestClearSeed)
+        {
+            renderer.clearSeedTriangle();
+            selectedSeedTriangles.clear();
+            uiState.modelLoadError.clear();
+        }
+
+        if (uiActions.requestRandomSeed)
+        {
+            const auto randomSeed = pickRandomSeedTriangle(mesh, selectedSeedTriangles, randomEngine);
+            if (!randomSeed.has_value())
+            {
+                uiState.modelLoadError = "No unseeded triangles left. Use Clear seeds to reset.";
+            }
+            else
+            {
+                std::string seedError;
+                if (renderer.setSeedTriangle(mesh, *randomSeed, seedError))
+                {
+                    selectedSeedTriangles.push_back(*randomSeed);
+                    uiState.modelLoadError.clear();
+                }
+                else
+                {
+                    uiState.modelLoadError = seedError;
+                }
             }
         }
 

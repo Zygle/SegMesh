@@ -1,13 +1,14 @@
 #pragma once
 
 #include "mesh_types.h"
-#include "ui_panel.h"
+#include "ui.h"
 
 #include <bgfx/bgfx.h>
 #include <GLFW/glfw3.h>
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace segmesh
 {
@@ -21,6 +22,8 @@ public:
 
     bool initialize(GLFWwindow* window, uint32_t width, uint32_t height, std::string& error);
     bool loadMesh(const CpuMesh& mesh, std::string& error);
+    bool setSeedTriangle(const CpuMesh& mesh, uint32_t triangleIndex, std::string& error);
+    void clearSeedTriangle();
     void resize(uint32_t width, uint32_t height);
     void renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState);
     void frame();
@@ -40,5 +43,7 @@ private:
     bgfx::UniformHandle uLightColor_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uCameraPos_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uMaterial_ = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle seedTriangleIbh_ = BGFX_INVALID_HANDLE;
+    std::vector<uint32_t> seedTriangleIndices_;
 };
 }

@@ -26,12 +26,20 @@ struct RendererUiState
     std::string modelLoadError;
 };
 
-int drawRendererPanel(
+struct RendererUiActions
+{
+    int pendingModelIndex = 0;
+    bool requestRandomSeed = false;
+    bool requestClearSeed = false;
+};
+
+RendererUiActions drawRendererPanel(
     const std::vector<std::filesystem::path>& modelPaths,
     int selectedModelIndex,
     const std::filesystem::path& objPath,
     uint32_t vertexCount,
     uint32_t triangleCount,
+    uint32_t seedTriangleCount,
     const char* rendererName,
     RendererUiState& uiState
 );
