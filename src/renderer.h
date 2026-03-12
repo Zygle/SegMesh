@@ -23,7 +23,14 @@ public:
     bool initialize(GLFWwindow* window, uint32_t width, uint32_t height, std::string& error);
     bool loadMesh(const CpuMesh& mesh, std::string& error);
     bool setSeedTriangle(const CpuMesh& mesh, uint32_t triangleIndex, std::string& error);
+    bool setTriangleGroups(
+        const CpuMesh& mesh,
+        const std::vector<uint32_t>& triangleGroups,
+        uint32_t groupCount,
+        std::string& error
+    );
     void clearSeedTriangle();
+    void clearTriangleGroups();
     void resize(uint32_t width, uint32_t height);
     void renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState);
     void frame();
@@ -36,6 +43,13 @@ private:
 
     bool initialized_ = false;
 
+    struct TriangleGroupDraw
+    {
+        bgfx::IndexBufferHandle ibh = BGFX_INVALID_HANDLE;
+        uint32_t indexCount = 0;
+        Float3 color{0.0f, 0.0f, 0.0f};
+    };
+
     GpuMesh gpuMesh_{};
     bgfx::ProgramHandle meshProgram_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uBaseColor_ = BGFX_INVALID_HANDLE;
@@ -45,5 +59,6 @@ private:
     bgfx::UniformHandle uMaterial_ = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle seedTriangleIbh_ = BGFX_INVALID_HANDLE;
     std::vector<uint32_t> seedTriangleIndices_;
+    std::vector<TriangleGroupDraw> triangleGroupDraws_;
 };
 }

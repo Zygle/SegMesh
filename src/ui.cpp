@@ -55,6 +55,12 @@ RendererUiActions drawRendererPanel(
         actions.requestClearSeed = true;
     }
     ImGui::Text("Seed count: %u", seedTriangleCount);
+    ImGui::Separator();
+    ImGui::Checkbox("Preview groups", &uiState.showGroups);
+    if (uiState.showGroups)
+    {
+        ImGui::SliderInt("Group count", &uiState.groupCount, 2, 8);
+    }
     if (!uiState.modelLoadError.empty())
     {
         ImGui::Separator();

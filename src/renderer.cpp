@@ -5,6 +5,7 @@
 #include <bx/math.h>
 #include <wayland-client-core.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -109,6 +110,32 @@ void destroyGpuMeshHandles(segmesh::GpuMesh& gpuMesh)
     gpuMesh.vbh = BGFX_INVALID_HANDLE;
     gpuMesh.ibh = BGFX_INVALID_HANDLE;
     gpuMesh.indexCount = 0;
+}
+
+void destroyIndexBuffer(bgfx::IndexBufferHandle& handle)
+{
+    if (bgfx::isValid(handle))
+    {
+        bgfx::destroy(handle);
+    }
+
+    handle = BGFX_INVALID_HANDLE;
+}
+
+segmesh::Float3 colorForGroup(uint32_t groupIndex)
+{
+    static constexpr std::array<segmesh::Float3, 8> kGroupPalette = {{
+        {0.90f, 0.32f, 0.32f},
+        {0.95f, 0.60f, 0.25f},
+        {0.94f, 0.84f, 0.28f},
+        {0.34f, 0.76f, 0.42f},
+        {0.24f, 0.72f, 0.78f},
+        {0.29f, 0.48f, 0.88f},
+        {0.62f, 0.42f, 0.86f},
+        {0.87f, 0.42f, 0.68f},
+    }};
+
+    return kGroupPalette[static_cast<std::size_t>(groupIndex % kGroupPalette.size())];
 }
 }
 
@@ -259,6 +286,7 @@ bool Renderer::loadMesh(const CpuMesh& mesh, std::string& error)
 
     destroyGpuMesh();
     gpuMesh_ = newMesh;
+    clearTriangleGroups();
     clearSeedTriangle();
     return true;
 }
@@ -304,14 +332,99 @@ bool Renderer::setSeedTriangle(const CpuMesh& mesh, uint32_t triangleIndex, std:
     return true;
 }
 
+bool Renderer::setTriangleGroups(
+    const CpuMesh& mesh,
+    const std::vector<uint32_t>& triangleGroups,
+    uint32_t groupCount,
+    std::string& error
+)
+{
+    if (!initialized_ || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
+    {
+        error = "Renderer mesh must be loaded before assigning triangle groups.";
+        return false;
+    }
+
+    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (groupCount == 0)
+    {
+        error = "Triangle group count must be greater than zero.";
+        return false;
+    }
+
+    if (triangleGroups.size() != triangleCount)
+    {
+        error = "Triangle group assignment size does not match the triangle count.";
+        return false;
+    }
+
+    std::vector<std::vector<uint32_t> > groupedIndices(groupCount);
+    for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+    {
+        const uint32_t groupIndex = triangleGroups[triangleIndex];
+        if (groupIndex >= groupCount)
+        {
+            error = "Triangle group assignment contains an out-of-range group id.";
+            return false;
+        }
+
+        const uint32_t indexOffset = triangleIndex * 3;
+        std::vector<uint32_t>& groupIndices = groupedIndices[groupIndex];
+        groupIndices.push_back(mesh.indices[indexOffset + 0]);
+        groupIndices.push_back(mesh.indices[indexOffset + 1]);
+        groupIndices.push_back(mesh.indices[indexOffset + 2]);
+    }
+
+    std::vector<TriangleGroupDraw> newTriangleGroupDraws;
+    newTriangleGroupDraws.reserve(groupCount);
+    for (uint32_t groupIndex = 0; groupIndex < groupCount; ++groupIndex)
+    {
+        const std::vector<uint32_t>& groupIndices = groupedIndices[groupIndex];
+        if (groupIndices.empty())
+        {
+            continue;
+        }
+
+        const bgfx::Memory* imem = bgfx::copy(
+            groupIndices.data(),
+            static_cast<uint32_t>(groupIndices.size() * sizeof(uint32_t))
+        );
+        TriangleGroupDraw groupDraw{};
+        groupDraw.ibh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+        groupDraw.indexCount = static_cast<uint32_t>(groupIndices.size());
+        groupDraw.color = colorForGroup(groupIndex);
+        if (!bgfx::isValid(groupDraw.ibh))
+        {
+            error = "Failed to create one of the triangle group index buffers.";
+            for (TriangleGroupDraw& createdGroupDraw : newTriangleGroupDraws)
+            {
+                destroyIndexBuffer(createdGroupDraw.ibh);
+            }
+            return false;
+        }
+
+        newTriangleGroupDraws.push_back(groupDraw);
+    }
+
+    clearTriangleGroups();
+    triangleGroupDraws_ = std::move(newTriangleGroupDraws);
+    return true;
+}
+
 void Renderer::clearSeedTriangle()
 {
-    if (bgfx::isValid(seedTriangleIbh_))
-    {
-        bgfx::destroy(seedTriangleIbh_);
-    }
-    seedTriangleIbh_ = BGFX_INVALID_HANDLE;
+    destroyIndexBuffer(seedTriangleIbh_);
     seedTriangleIndices_.clear();
+}
+
+void Renderer::clearTriangleGroups()
+{
+    for (TriangleGroupDraw& groupDraw : triangleGroupDraws_)
+    {
+        destroyIndexBuffer(groupDraw.ibh);
+    }
+
+    triangleGroupDraws_.clear();
 }
 
 void Renderer::resize(uint32_t width, uint32_t height)
@@ -351,9 +464,6 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
 
     float model[16];
     bx::mtxRotateY(model, modelRotation);
-    bgfx::setTransform(model);
-    bgfx::setVertexBuffer(0, gpuMesh_.vbh);
-    bgfx::setIndexBuffer(gpuMesh_.ibh, 0, gpuMesh_.indexCount);
 
     const Float3 lightDir = normalize(
         {uiState.lightDirection[0], uiState.lightDirection[1], uiState.lightDirection[2]},
@@ -365,40 +475,48 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
     const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
     const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 0.0f};
 
-    bgfx::setUniform(uBaseColor_, baseColorUniform);
-    bgfx::setUniform(uLightDir_, lightDirUniform);
-    bgfx::setUniform(uLightColor_, lightColorUniform);
-    bgfx::setUniform(uCameraPos_, cameraPosUniform);
-    bgfx::setUniform(uMaterial_, materialUniform);
-
     const uint64_t state = BGFX_STATE_WRITE_RGB
         | BGFX_STATE_WRITE_A
         | BGFX_STATE_WRITE_Z
         | BGFX_STATE_DEPTH_TEST_LESS
         | BGFX_STATE_MSAA;
 
-    bgfx::setState(state);
-    bgfx::submit(0, meshProgram_);
+    const auto submitMeshPass = [&](bgfx::IndexBufferHandle ibh, uint32_t indexCount, const float color[4], uint64_t drawState)
+    {
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, gpuMesh_.vbh);
+        bgfx::setIndexBuffer(ibh, 0, indexCount);
+        bgfx::setUniform(uBaseColor_, color);
+        bgfx::setUniform(uLightDir_, lightDirUniform);
+        bgfx::setUniform(uLightColor_, lightColorUniform);
+        bgfx::setUniform(uCameraPos_, cameraPosUniform);
+        bgfx::setUniform(uMaterial_, materialUniform);
+        bgfx::setState(drawState);
+        bgfx::submit(0, meshProgram_);
+    };
+
+    if (triangleGroupDraws_.empty())
+    {
+        submitMeshPass(gpuMesh_.ibh, gpuMesh_.indexCount, baseColorUniform, state);
+    }
+    else
+    {
+        for (const TriangleGroupDraw& groupDraw : triangleGroupDraws_)
+        {
+            const float groupColorUniform[4] = {groupDraw.color.x, groupDraw.color.y, groupDraw.color.z, 1.0f};
+            submitMeshPass(groupDraw.ibh, groupDraw.indexCount, groupColorUniform, state);
+        }
+    }
 
     if (bgfx::isValid(seedTriangleIbh_))
     {
         const float seedColorUniform[4] = {1.0f, 0.12f, 0.12f, 1.0f};
 
-        bgfx::setTransform(model);
-        bgfx::setVertexBuffer(0, gpuMesh_.vbh);
-        bgfx::setIndexBuffer(seedTriangleIbh_, 0, static_cast<uint32_t>(seedTriangleIndices_.size()));
-        bgfx::setUniform(uBaseColor_, seedColorUniform);
-        bgfx::setUniform(uLightDir_, lightDirUniform);
-        bgfx::setUniform(uLightColor_, lightColorUniform);
-        bgfx::setUniform(uCameraPos_, cameraPosUniform);
-        bgfx::setUniform(uMaterial_, materialUniform);
-
         const uint64_t seedState = BGFX_STATE_WRITE_RGB
             | BGFX_STATE_WRITE_A
             | BGFX_STATE_DEPTH_TEST_LEQUAL
             | BGFX_STATE_MSAA;
-        bgfx::setState(seedState);
-        bgfx::submit(0, meshProgram_);
+        submitMeshPass(seedTriangleIbh_, static_cast<uint32_t>(seedTriangleIndices_.size()), seedColorUniform, seedState);
     }
 }
 
@@ -427,6 +545,7 @@ void Renderer::destroyGpuMesh()
 
 void Renderer::shutdown()
 {
+    clearTriangleGroups();
     clearSeedTriangle();
     destroyGpuMesh();
 

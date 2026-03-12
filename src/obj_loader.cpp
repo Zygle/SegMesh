@@ -52,7 +52,7 @@ uint32_t packNormal(const Eigen::Vector3f& normal)
     const uint32_t nz = toByte(normal.z());
     return nx | (ny << 8) | (nz << 16) | (0xffu << 24);
 }
-} // namespace
+}
 
 namespace segmesh
 {
