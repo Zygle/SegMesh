@@ -56,10 +56,10 @@ RendererUiActions drawRendererPanel(
     }
     ImGui::Text("Seed count: %u", seedTriangleCount);
     ImGui::Separator();
-    ImGui::Checkbox("Preview groups", &uiState.showGroups);
-    if (uiState.showGroups)
+    ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
+    if (uiState.showSegmentation && seedTriangleCount == 0)
     {
-        ImGui::SliderInt("Group count", &uiState.groupCount, 2, 8);
+        ImGui::TextUnformatted("Add at least one seed triangle to solve the segmentation.");
     }
     if (!uiState.modelLoadError.empty())
     {

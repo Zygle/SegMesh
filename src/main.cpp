@@ -1,5 +1,6 @@
 #include "obj_loader.h"
 #include "renderer.h"
+#include "segmentation.h"
 #include "ui.h"
 
 #include <GLFW/glfw3.h>
@@ -95,76 +96,39 @@ std::optional<uint32_t> pickRandomSeedTriangle(
     return candidate;
 }
 
-std::vector<uint32_t> buildTriangleGroups(const segmesh::CpuMesh& mesh, uint32_t groupCount)
-{
-    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-    std::vector<uint32_t> triangleGroups(triangleCount, 0);
-    if (triangleCount == 0 || groupCount == 0)
-    {
-        return triangleGroups;
-    }
-
-    if (mesh.faceCentroids.size() != triangleCount)
-    {
-        for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
-        {
-            triangleGroups[triangleIndex] = triangleIndex % groupCount;
-        }
-        return triangleGroups;
-    }
-
-    segmesh::Float3 center{0.0f, 0.0f, 0.0f};
-    for (const segmesh::Float3& centroid : mesh.faceCentroids)
-    {
-        center.x += centroid.x;
-        center.y += centroid.y;
-        center.z += centroid.z;
-    }
-
-    const float inverseTriangleCount = 1.0f / static_cast<float>(triangleCount);
-    center.x *= inverseTriangleCount;
-    center.y *= inverseTriangleCount;
-    center.z *= inverseTriangleCount;
-
-    constexpr float kPi = 3.14159265358979323846f;
-    constexpr float kTwoPi = 6.28318530717958647692f;
-
-    for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
-    {
-        const segmesh::Float3& centroid = mesh.faceCentroids[triangleIndex];
-        const float angle = std::atan2(centroid.z - center.z, centroid.x - center.x);
-        float normalizedAngle = (angle + kPi) / kTwoPi;
-        if (normalizedAngle >= 1.0f)
-        {
-            normalizedAngle = std::nextafter(1.0f, 0.0f);
-        }
-
-        uint32_t groupIndex = static_cast<uint32_t>(normalizedAngle * static_cast<float>(groupCount));
-        if (groupIndex >= groupCount)
-        {
-            groupIndex = groupCount - 1;
-        }
-        triangleGroups[triangleIndex] = groupIndex;
-    }
-
-    return triangleGroups;
-}
-
-bool refreshTriangleGroups(
+bool refreshSegmentationPreview(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
+    const std::vector<uint32_t>& seedTriangles,
     const segmesh::RendererUiState& uiState,
     std::string& error
 )
 {
-    if (!uiState.showGroups)
+    if (!uiState.showSegmentation || seedTriangles.empty())
     {
         renderer.clearTriangleGroups();
         return true;
     }
 
-    const uint32_t groupCount = static_cast<uint32_t>(uiState.groupCount);
-    return renderer.setTriangleGroups(mesh, buildTriangleGroups(mesh, groupCount), groupCount, error);
+    std::vector<uint32_t> triangleLabels;
+    if (!segmesh::segmentMeshRandomWalk(mesh, seedTriangles, triangleLabels, error))
+    {
+        return false;
+    }
+
+    uint32_t segmentCount = 0;
+    for (const uint32_t label : triangleLabels)
+    {
+        segmentCount = std::max(segmentCount, label + 1);
+    }
+
+    if (segmentCount == 0)
+    {
+        renderer.clearTriangleGroups();
+        return true;
+    }
+
+    return renderer.setTriangleGroups(mesh, triangleLabels, segmentCount, error);
 }
 }
 
@@ -357,8 +321,7 @@ int main(int argc, char** argv)
             1
         );
 
-        const bool previousShowGroups = uiState.showGroups;
-        const int previousGroupCount = uiState.groupCount;
+        const bool previousShowSegmentation = uiState.showSegmentation;
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
             modelPaths,
             selectedModelIndex,
@@ -369,8 +332,7 @@ int main(int argc, char** argv)
             renderer.rendererName(),
             uiState
         );
-        const bool groupSettingsChanged = uiState.showGroups != previousShowGroups
-            || uiState.groupCount != previousGroupCount;
+        const bool previewSettingsChanged = uiState.showSegmentation != previousShowSegmentation;
 
         const int pendingModelIndex = uiActions.pendingModelIndex;
         bool meshReloaded = false;
@@ -395,12 +357,12 @@ int main(int argc, char** argv)
             }
         }
 
-        if (groupSettingsChanged || meshReloaded)
+        if (previewSettingsChanged || meshReloaded)
         {
-            std::string groupError;
-            if (!refreshTriangleGroups(renderer, mesh, uiState, groupError))
+            std::string previewError;
+            if (!refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, previewError))
             {
-                uiState.modelLoadError = groupError;
+                uiState.modelLoadError = previewError;
             }
         }
 
@@ -409,6 +371,12 @@ int main(int argc, char** argv)
             renderer.clearSeedTriangle();
             selectedSeedTriangles.clear();
             uiState.modelLoadError.clear();
+
+            std::string previewError;
+            if (!refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, previewError))
+            {
+                uiState.modelLoadError = previewError;
+            }
         }
 
         if (uiActions.requestRandomSeed)
@@ -425,6 +393,12 @@ int main(int argc, char** argv)
                 {
                     selectedSeedTriangles.push_back(*randomSeed);
                     uiState.modelLoadError.clear();
+
+                    std::string previewError;
+                    if (!refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, previewError))
+                    {
+                        uiState.modelLoadError = previewError;
+                    }
                 }
                 else
                 {

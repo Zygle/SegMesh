@@ -23,8 +23,7 @@ struct RendererUiState
     float specularStrength = 0.32f;
     float shininess = 64.0f;
 
-    bool showGroups = false;
-    int groupCount = 4;
+    bool showSegmentation = false;
 
     std::string modelLoadError;
 };

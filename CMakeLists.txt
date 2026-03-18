@@ -126,6 +126,7 @@ add_executable(segmesh
   src/mesh_types.cpp
   src/obj_loader.cpp
   src/renderer.cpp
+  src/segmentation.cpp
   src/ui.cpp
   src/main.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui.cpp

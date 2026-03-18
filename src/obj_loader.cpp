@@ -15,6 +15,7 @@
 namespace
 {
 using OpenMeshTriMesh = OpenMesh::TriMesh_ArrayKernelT<>;
+using segmesh::FaceAdjacency;
 using segmesh::Float3;
 using segmesh::MeshVertex;
 
@@ -133,11 +134,17 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
 
     outMesh.indices.reserve(mesh.n_faces() * 3);
     outMesh.faceCentroids.reserve(mesh.n_faces());
+    outMesh.faceNormals.reserve(mesh.n_faces());
     outMesh.faceAreas.reserve(mesh.n_faces());
+    std::vector<int32_t> faceMap(mesh.n_faces(), -1);
 
     for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
     {
-        std::array<OpenMeshTriMesh::VertexHandle, 3> faceVertices{};
+        std::array<OpenMeshTriMesh::VertexHandle, 3> faceVertices = {
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+        };
         std::size_t corner = 0;
         for (auto fvIt = mesh.cfv_iter(fh); fvIt.is_valid(); ++fvIt)
         {
@@ -156,6 +163,7 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         const uint32_t i0 = vertexMap[faceVertices[0].idx()];
         const uint32_t i1 = vertexMap[faceVertices[1].idx()];
         const uint32_t i2 = vertexMap[faceVertices[2].idx()];
+        const uint32_t outputFaceIndex = static_cast<uint32_t>(outMesh.faceCentroids.size());
         outMesh.indices.push_back(i0);
         outMesh.indices.push_back(i1);
         outMesh.indices.push_back(i2);
@@ -164,10 +172,52 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         const Eigen::Vector3f p1 = preprocessedPositions[faceVertices[1].idx()];
         const Eigen::Vector3f p2 = preprocessedPositions[faceVertices[2].idx()];
         const Eigen::Vector3f centroid = (p0 + p1 + p2) / 3.0f;
+        const Eigen::Vector3f faceNormal = normalizeSafe(toEigen(mesh.normal(fh)));
         const float area = 0.5f * ((p1 - p0).cross(p2 - p0)).norm();
 
         outMesh.faceCentroids.push_back(toFloat3(centroid));
+        outMesh.faceNormals.push_back(toFloat3(faceNormal));
         outMesh.faceAreas.push_back(area);
+        faceMap[fh.idx()] = static_cast<int32_t>(outputFaceIndex);
+    }
+
+    outMesh.faceAdjacency.resize(outMesh.faceCentroids.size());
+    for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
+    {
+        const int32_t outputFaceIndex = faceMap[fh.idx()];
+        if (outputFaceIndex < 0)
+        {
+            continue;
+        }
+
+        FaceAdjacency adjacency{};
+        std::size_t edgeIndex = 0;
+        for (auto fhIt = mesh.cfh_iter(fh); fhIt.is_valid() && edgeIndex < adjacency.neighbors.size(); ++fhIt, ++edgeIndex)
+        {
+            const OpenMeshTriMesh::HalfedgeHandle heh = *fhIt;
+            const OpenMeshTriMesh::HalfedgeHandle oppositeHeh = mesh.opposite_halfedge_handle(heh);
+            const OpenMeshTriMesh::VertexHandle fromVh = mesh.from_vertex_handle(heh);
+            const OpenMeshTriMesh::VertexHandle toVh = mesh.to_vertex_handle(heh);
+            const Eigen::Vector3f edgeVector = preprocessedPositions[toVh.idx()] - preprocessedPositions[fromVh.idx()];
+            adjacency.edgeLengths[edgeIndex] = edgeVector.norm();
+
+            if (!mesh.is_boundary(oppositeHeh))
+            {
+                const OpenMeshTriMesh::FaceHandle neighborFh = mesh.face_handle(oppositeHeh);
+                const int32_t neighborIndex = faceMap[neighborFh.idx()];
+                adjacency.neighbors[edgeIndex] = neighborIndex;
+
+                if (neighborIndex >= 0)
+                {
+                    const Eigen::Vector3f normal = normalizeSafe(toEigen(mesh.normal(fh)));
+                    const Eigen::Vector3f neighborNormal = normalizeSafe(toEigen(mesh.normal(neighborFh)));
+                    const float signedTurn = edgeVector.dot(normal.cross(neighborNormal));
+                    adjacency.concavityScales[edgeIndex] = signedTurn < 0.0f ? 1.0f : 0.2f;
+                }
+            }
+        }
+
+        outMesh.faceAdjacency[static_cast<std::size_t>(outputFaceIndex)] = adjacency;
     }
 
     if (outMesh.vertices.empty() || outMesh.indices.empty())
