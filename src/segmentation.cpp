@@ -25,6 +25,7 @@ bool componentHasSeed(
     std::vector<bool>& visited
 )
 {
+    // Traverse one connected face component and check whether it contains any seed.
     std::vector<uint32_t> stack;
     stack.push_back(startFace);
     visited[static_cast<std::size_t>(startFace)] = true;
@@ -84,6 +85,7 @@ bool segmentMeshRandomWalk(
         return false;
     }
 
+    // Each unique seed becomes one segment label and one probability field.
     std::vector<uint32_t> uniqueSeeds;
     uniqueSeeds.reserve(seedTriangles.size());
     std::vector<int32_t> faceLabels(faceCount, -1);
@@ -144,6 +146,7 @@ bool segmentMeshRandomWalk(
         return true;
     }
 
+
     std::vector<int32_t> rowIndices(faceCount, -1);
     uint32_t unknownCount = 0;
     for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
@@ -172,6 +175,7 @@ bool segmentMeshRandomWalk(
     edges.reserve(static_cast<std::size_t>(faceCount) * 3 / 2);
 
     double differenceSum = 0.0;
+    // Build one undirected graph edge for each adjacent face pair.
     for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
     {
         const FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
@@ -207,6 +211,7 @@ bool segmentMeshRandomWalk(
 
     const double averageDifference = std::max(differenceSum / static_cast<double>(edges.size()), 1.0e-12);
 
+    // Assemble a sparse Laplacian and one right-hand side column per seed.
     Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(
         static_cast<Eigen::Index>(unknownCount),
         static_cast<Eigen::Index>(uniqueSeeds.size())
@@ -267,6 +272,7 @@ bool segmentMeshRandomWalk(
     );
     laplacian.setFromTriplets(triplets.begin(), triplets.end());
 
+    // Factor once, then solve all seed probability fields together.
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double> > solver;
     solver.compute(laplacian);
     if (solver.info() != Eigen::Success)
@@ -296,6 +302,7 @@ bool segmentMeshRandomWalk(
             return false;
         }
 
+        // Assign the face to the seed
         Eigen::Index bestLabel = 0;
         probabilities.row(rowIndex).maxCoeff(&bestLabel);
         const double bestValue = probabilities(rowIndex, bestLabel);

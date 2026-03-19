@@ -481,6 +481,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         | BGFX_STATE_DEPTH_TEST_LESS
         | BGFX_STATE_MSAA;
 
+    // Reuse the same shaded draw setup for the base mesh, groups, and seed ovelays
     const auto submitMeshPass = [&](bgfx::IndexBufferHandle ibh, uint32_t indexCount, const float color[4], uint64_t drawState)
     {
         bgfx::setTransform(model);
