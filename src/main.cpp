@@ -21,12 +21,10 @@
 namespace
 {
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kOrbitSensitivity = 0.01f;
+constexpr float kOrbitSensitivity = 0.004f;
 constexpr float kZoomSensitivity = 0.2f;
 constexpr float kMinCameraDistance = 1.0f;
 constexpr float kMaxCameraDistance = 10.0f;
-constexpr float kMinCameraPitch = -1.45f;
-constexpr float kMaxCameraPitch = 1.45f;
 constexpr float kPickEpsilon = 1.0e-8f;
 
 double g_scrollDelta = 0.0;
@@ -106,6 +104,11 @@ segmesh::Float3 cameraEyePosition(const segmesh::RendererUiState& uiState)
         std::sin(uiState.cameraPitch) * uiState.cameraDistance,
         std::cos(uiState.cameraYaw) * cosPitch * uiState.cameraDistance,
     };
+}
+
+float wrapAngle(float angle)
+{
+    return std::remainder(angle, 2.0f * kPi);
 }
 
 bool rayTriangleIntersection(
@@ -477,8 +480,8 @@ int main(int argc, char** argv)
     double previousMouseX = 0.0;
     double previousMouseY = 0.0;
     glfwGetCursorPos(window, &previousMouseX, &previousMouseY);
-    bool previousLeftPressed = false;
     bool previousRightPressed = false;
+    bool orbitDragging = false;
 
     float previousTime = static_cast<float>(glfwGetTime());
     while (!glfwWindowShouldClose(window))
@@ -559,6 +562,30 @@ int main(int argc, char** argv)
         );
         const bool mouseOverUi = ImGui::MouseOverArea();
         const bool previewSettingsChanged = uiState.showSegmentation != previousShowSegmentation;
+        const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
+
+        if (shouldOrbitDrag && !orbitDragging)
+        {
+            orbitDragging = true;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            if (glfwRawMouseMotionSupported())
+            {
+                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+            }
+            glfwGetCursorPos(window, &previousMouseX, &previousMouseY);
+        }
+        else if (!shouldOrbitDrag && orbitDragging)
+        {
+            orbitDragging = false;
+            if (glfwRawMouseMotionSupported())
+            {
+                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+            }
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            glfwGetCursorPos(window, &previousMouseX, &previousMouseY);
+            mouseX = previousMouseX;
+            mouseY = previousMouseY;
+        }
 
         const int pendingModelIndex = uiActions.pendingModelIndex;
         bool meshReloaded = false;
@@ -582,20 +609,17 @@ int main(int argc, char** argv)
                 uiState.modelLoadError = loadError;
             }
         }
-
-        if (!mouseOverUi)
+        //Camera on the Y asxis feel unatural need to fix the jump from top to bottom
+        if (orbitDragging)
         {
             const double mouseDeltaX = mouseX - previousMouseX;
             const double mouseDeltaY = mouseY - previousMouseY;
-            if (leftPressed && previousLeftPressed)
-            {
-                uiState.cameraYaw -= static_cast<float>(mouseDeltaX) * kOrbitSensitivity;
-                uiState.cameraPitch = std::clamp(
-                    uiState.cameraPitch - static_cast<float>(mouseDeltaY) * kOrbitSensitivity,
-                    kMinCameraPitch,
-                    kMaxCameraPitch
-                );
-            }
+            uiState.cameraYaw = wrapAngle(uiState.cameraYaw + static_cast<float>(mouseDeltaX) * kOrbitSensitivity);
+            uiState.cameraPitch += static_cast<float>(mouseDeltaY) * kOrbitSensitivity;
+        }
+
+        if (!mouseOverUi)
+        {
 
             if (scroll != 0)
             {
@@ -688,7 +712,6 @@ int main(int argc, char** argv)
 
         previousMouseX = mouseX;
         previousMouseY = mouseY;
-        previousLeftPressed = leftPressed;
         previousRightPressed = rightPressed;
 
         renderer.renderScene(static_cast<uint32_t>(width), static_cast<uint32_t>(height), modelRotation, uiState);
@@ -697,6 +720,11 @@ int main(int argc, char** argv)
     }
 
     imguiDestroy();
+    if (glfwRawMouseMotionSupported())
+    {
+        glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+    }
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     renderer.shutdown();
     glfwDestroyWindow(window);
     glfwTerminate();
