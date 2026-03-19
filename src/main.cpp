@@ -4,6 +4,7 @@
 #include "ui.h"
 
 #include <GLFW/glfw3.h>
+#include <bx/math.h>
 
 #include "imgui.h"
 
@@ -106,6 +107,11 @@ segmesh::Float3 cameraEyePosition(const segmesh::RendererUiState& uiState)
     };
 }
 
+segmesh::Float3 toFloat3(const bx::Vec3& v)
+{
+    return {v.x, v.y, v.z};
+}
+
 float wrapAngle(float angle)
 {
     return std::remainder(angle, 2.0f * kPi);
@@ -156,8 +162,8 @@ bool rayTriangleIntersection(
 
 std::optional<uint32_t> pickTriangleUnderCursor(
     const segmesh::CpuMesh& mesh,
-    double mouseX,
-    double mouseY,
+    double mouseFramebufferX,
+    double mouseFramebufferY,
     uint32_t width,
     uint32_t height,
     float modelRotation,
@@ -170,26 +176,43 @@ std::optional<uint32_t> pickTriangleUnderCursor(
     }
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const float tanHalfFov = std::tan(60.0f * kPi / 360.0f);
+    const segmesh::Float3 eyePosition = cameraEyePosition(uiState);
+    const bx::Vec3 eye{eyePosition.x, eyePosition.y, eyePosition.z};
+    const bx::Vec3 at{0.0f, 0.0f, 0.0f};
 
-    const segmesh::Float3 eye = cameraEyePosition(uiState);
-    const segmesh::Float3 forward = normalize(scale(eye, -1.0f), {0.0f, 0.0f, -1.0f});
-    const segmesh::Float3 right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}), {1.0f, 0.0f, 0.0f});
-    const segmesh::Float3 up = normalize(cross(right, forward), {0.0f, 1.0f, 0.0f});
+    float view[16];
+    bx::mtxLookAt(view, eye, at);
 
-    const float ndcX = static_cast<float>(((mouseX + 0.5) / static_cast<double>(width)) * 2.0 - 1.0);
-    const float ndcY = static_cast<float>(1.0 - ((mouseY + 0.5) / static_cast<double>(height)) * 2.0);
+    const bgfx::Caps* caps = bgfx::getCaps();
+    if (caps == nullptr)
+    {
+        return std::nullopt;
+    }
 
-    const segmesh::Float3 rayDirectionWorld = normalize(
-        add(
-            add(forward, scale(right, ndcX * aspect * tanHalfFov)),
-            scale(up, ndcY * tanHalfFov)
-        ),
-        forward
-    );
+    float proj[16];
+    bx::mtxProj(proj, 60.0f, aspect, 0.01f, 100.0f, caps->homogeneousDepth);
 
-    const segmesh::Float3 rayOrigin = rotateY(eye, -modelRotation);
-    const segmesh::Float3 rayDirection = normalize(rotateY(rayDirectionWorld, -modelRotation), rayDirectionWorld);
+    float invView[16];
+    float invProj[16];
+    float model[16];
+    float invModel[16];
+    bx::mtxInverse(invView, view);
+    bx::mtxInverse(invProj, proj);
+    bx::mtxRotateY(model, modelRotation);
+    bx::mtxInverse(invModel, model);
+
+    const float ndcX = static_cast<float>(((mouseFramebufferX + 0.5) / static_cast<double>(width)) * 2.0 - 1.0);
+    const float ndcY = static_cast<float>(1.0 - ((mouseFramebufferY + 0.5) / static_cast<double>(height)) * 2.0);
+    const float nearClipZ = caps->homogeneousDepth ? 0.0f : -1.0f;
+
+    const bx::Vec3 nearClip{ndcX, ndcY, nearClipZ};
+    const bx::Vec3 farClip{ndcX, ndcY, 1.0f};
+    const bx::Vec3 nearWorld = bx::mulH(bx::mulH(nearClip, invProj), invView);
+    const bx::Vec3 farWorld = bx::mulH(bx::mulH(farClip, invProj), invView);
+
+    const segmesh::Float3 rayOrigin = toFloat3(bx::mulH(nearWorld, invModel));
+    const segmesh::Float3 rayEnd = toFloat3(bx::mulH(farWorld, invModel));
+    const segmesh::Float3 rayDirection = normalize(subtract(rayEnd, rayOrigin), {0.0f, 0.0f, -1.0f});
 
     float closestDistance = std::numeric_limits<float>::max();
     std::optional<uint32_t> closestTriangle;
@@ -222,6 +245,33 @@ std::optional<uint32_t> pickTriangleUnderCursor(
     }
 
     return closestTriangle;
+}
+
+void scaleCursorToFramebuffer(
+    GLFWwindow* window,
+    uint32_t framebufferWidth,
+    uint32_t framebufferHeight,
+    double mouseX,
+    double mouseY,
+    double& outMouseFramebufferX,
+    double& outMouseFramebufferY
+)
+{
+    int windowWidth = 0;
+    int windowHeight = 0;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
+    if (windowWidth <= 0 || windowHeight <= 0)
+    {
+        outMouseFramebufferX = mouseX;
+        outMouseFramebufferY = mouseY;
+        return;
+    }
+
+    const double scaleX = static_cast<double>(framebufferWidth) / static_cast<double>(windowWidth);
+    const double scaleY = static_cast<double>(framebufferHeight) / static_cast<double>(windowHeight);
+    outMouseFramebufferX = mouseX * scaleX;
+    outMouseFramebufferY = mouseY * scaleY;
 }
 
 bool triangleAlreadySeeded(const std::vector<uint32_t>& seededTriangles, uint32_t triangleIndex)
@@ -509,10 +559,6 @@ int main(int argc, char** argv)
         const float now = static_cast<float>(glfwGetTime());
         const float dt = now - previousTime;
         previousTime = now;
-        if (uiState.autoRotate)
-        {
-            modelRotation += uiState.rotateSpeed * dt;
-        }
 
         double mouseX = 0.0;
         double mouseY = 0.0;
@@ -632,10 +678,22 @@ int main(int argc, char** argv)
 
             if (rightPressed && !previousRightPressed)
             {
-                const auto pickedTriangle = pickTriangleUnderCursor(
-                    mesh,
+                double mouseFramebufferX = mouseX;
+                double mouseFramebufferY = mouseY;
+                scaleCursorToFramebuffer(
+                    window,
+                    static_cast<uint32_t>(width),
+                    static_cast<uint32_t>(height),
                     mouseX,
                     mouseY,
+                    mouseFramebufferX,
+                    mouseFramebufferY
+                );
+
+                const auto pickedTriangle = pickTriangleUnderCursor(
+                    mesh,
+                    mouseFramebufferX,
+                    mouseFramebufferY,
                     static_cast<uint32_t>(width),
                     static_cast<uint32_t>(height),
                     modelRotation,
@@ -717,6 +775,11 @@ int main(int argc, char** argv)
         renderer.renderScene(static_cast<uint32_t>(width), static_cast<uint32_t>(height), modelRotation, uiState);
         imguiEndFrame();
         renderer.frame();
+
+        if (uiState.autoRotate)
+        {
+            modelRotation += uiState.rotateSpeed * dt;
+        }
     }
 
     imguiDestroy();
