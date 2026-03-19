@@ -198,6 +198,7 @@ bool segmentMeshRandomWalk(
             const double difference = static_cast<double>(adjacency.concavityScales[edgeSlot]) * (1.0 - normalDot);
             const double edgeLength = std::max(static_cast<double>(adjacency.edgeLengths[edgeSlot]), 1.0e-12);
 
+            //Eq. (1): after normalization affinities become the transition probabilities p{k,i}.
             edges.push_back({faceIndex, static_cast<uint32_t>(neighborIndex), edgeLength, difference});
             differenceSum += difference;
         }
@@ -235,6 +236,7 @@ bool segmentMeshRandomWalk(
             diagonal[static_cast<std::size_t>(row0)] += weight;
             if (label1 >= 0)
             {
+                // Seed neighbors are fixed P^l values, so they move to the right-hand side.
                 rhs(row0, label1) += weight;
             }
             else
@@ -259,6 +261,8 @@ bool segmentMeshRandomWalk(
 
     for (uint32_t row = 0; row < unknownCount; ++row)
     {
+        // Paper Eq. (2)
+        // sum_j w_ij (x_i - x_j) = 0 for each non-seed face.
         triplets.emplace_back(
             static_cast<Eigen::Index>(row),
             static_cast<Eigen::Index>(row),
@@ -302,7 +306,7 @@ bool segmentMeshRandomWalk(
             return false;
         }
 
-        // Assign the face to the seed
+        // Paper Eq. (3) assign the face to the seed with maximal probability.
         Eigen::Index bestLabel = 0;
         probabilities.row(rowIndex).maxCoeff(&bestLabel);
         const double bestValue = probabilities(rowIndex, bestLabel);
