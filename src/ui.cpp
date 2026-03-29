@@ -45,6 +45,19 @@ RendererUiActions drawRendererPanel(
     ImGui::Text("Vertices: %u", vertexCount);
     ImGui::Text("Triangles: %u", triangleCount);
     ImGui::Separator();
+    ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
+    ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
+    if (uiState.automaticSegmentation)
+    {
+        ImGui::SliderInt("Auto seed target", &uiState.automaticSeedCount, 1, 64);
+        ImGui::TextUnformatted("Automatic mode uses coarse farthest-point seeding.");
+    }
+    if (uiState.showSegmentation && !uiState.automaticSegmentation && seedTriangleCount == 0)
+    {
+        ImGui::TextUnformatted("Add at least one seed triangle to solve the segmentation.");
+    }
+    ImGui::Separator();
+    ImGui::BeginDisabled(uiState.automaticSegmentation);
     if (ImGui::Button("Place random seed"))
     {
         actions.requestRandomSeed = true;
@@ -54,12 +67,11 @@ RendererUiActions drawRendererPanel(
     {
         actions.requestClearSeed = true;
     }
+    ImGui::EndDisabled();
     ImGui::Text("Seed count: %u", seedTriangleCount);
-    ImGui::Separator();
-    ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
-    if (uiState.showSegmentation && seedTriangleCount == 0)
+    if (uiState.automaticSegmentation)
     {
-        ImGui::TextUnformatted("Add at least one seed triangle to solve the segmentation.");
+        ImGui::TextUnformatted("Manual seed placement is disabled while automatic mode is enabled.");
     }
     if (!uiState.modelLoadError.empty())
     {

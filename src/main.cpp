@@ -360,6 +360,36 @@ std::optional<uint32_t> pickRandomSeedTriangle(
     return candidate;
 }
 
+const std::vector<uint32_t>& activeSeedTriangles(
+    const std::vector<uint32_t>& manualSeedTriangles,
+    const std::vector<uint32_t>& automaticSeedTriangles,
+    bool automaticSegmentation
+)
+{
+    return automaticSegmentation ? automaticSeedTriangles : manualSeedTriangles;
+}
+
+bool syncDisplayedSeedTriangles(
+    segmesh::Renderer& renderer,
+    const segmesh::CpuMesh& mesh,
+    const std::vector<uint32_t>& seedTriangles,
+    std::string& error
+)
+{
+    renderer.clearSeedTriangle();
+    for (const uint32_t triangleIndex : seedTriangles)
+    {
+        if (!renderer.setSeedTriangle(mesh, triangleIndex, error))
+        {
+            renderer.clearSeedTriangle();
+            return false;
+        }
+    }
+
+    error.clear();
+    return true;
+}
+
 bool refreshSegmentationPreview(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -541,7 +571,8 @@ int main(int argc, char** argv)
     imguiCreate(18.0f);
 
     float modelRotation = 0.0f;
-    std::vector<uint32_t> selectedSeedTriangles;
+    std::vector<uint32_t> manualSeedTriangles;
+    std::vector<uint32_t> automaticSeedTriangles;
     segmesh::RendererUiState uiState{};
     std::mt19937 randomEngine(std::random_device{}());
     double previousMouseX = 0.0;
@@ -613,18 +644,29 @@ int main(int argc, char** argv)
         );
 
         const bool previousShowSegmentation = uiState.showSegmentation;
+        const bool previousAutomaticSegmentation = uiState.automaticSegmentation;
+        const int previousAutomaticSeedCount = uiState.automaticSeedCount;
+        const std::vector<uint32_t>& seedsBeforeUi =
+            activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
             modelPaths,
             selectedModelIndex,
             objPath,
             static_cast<uint32_t>(mesh.vertices.size()),
             static_cast<uint32_t>(mesh.indices.size() / 3),
-            static_cast<uint32_t>(selectedSeedTriangles.size()),
+            static_cast<uint32_t>(seedsBeforeUi.size()),
             renderer.rendererName(),
             uiState
         );
+        if (uiState.automaticSegmentation)
+        {
+            uiState.showSegmentation = true;
+        }
         const bool mouseOverUi = ImGui::MouseOverArea();
         const bool previewSettingsChanged = uiState.showSegmentation != previousShowSegmentation;
+        const bool automaticSegmentationChanged =
+            uiState.automaticSegmentation != previousAutomaticSegmentation;
+        const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)
@@ -663,7 +705,8 @@ int main(int argc, char** argv)
                 objPath = newPath;
                 selectedModelIndex = pendingModelIndex;
                 modelRotation = 0.0f;
-                selectedSeedTriangles.clear();
+                manualSeedTriangles.clear();
+                automaticSeedTriangles.clear();
                 meshReloaded = true;
                 uiState.modelLoadError.clear();
             }
@@ -672,7 +715,53 @@ int main(int argc, char** argv)
                 uiState.modelLoadError = loadError;
             }
         }
-        //Camera on the Y asxis feel unatural need to fix the jump from top to bottom
+
+        bool activeSeedsChanged = false;
+        if (uiState.automaticSegmentation
+            && (meshReloaded || automaticSegmentationChanged || automaticSeedCountChanged))
+        {
+            std::string autoSeedError;
+            if (!segmesh::selectAutomaticSeedsCoarse(
+                    mesh,
+                    static_cast<uint32_t>(std::max(uiState.automaticSeedCount, 1)),
+                    automaticSeedTriangles,
+                    autoSeedError
+                ))
+            {
+                automaticSeedTriangles.clear();
+                renderer.clearSeedTriangle();
+                renderer.clearTriangleGroups();
+                uiState.modelLoadError = autoSeedError;
+            }
+            else if (syncDisplayedSeedTriangles(renderer, mesh, automaticSeedTriangles, autoSeedError))
+            {
+                activeSeedsChanged = true;
+                uiState.modelLoadError.clear();
+            }
+            else
+            {
+                automaticSeedTriangles.clear();
+                renderer.clearSeedTriangle();
+                renderer.clearTriangleGroups();
+                uiState.modelLoadError = autoSeedError;
+            }
+        }
+        else if (automaticSegmentationChanged)
+        {
+            std::string seedDisplayError;
+            const std::vector<uint32_t>& currentSeeds =
+                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
+            if (syncDisplayedSeedTriangles(renderer, mesh, currentSeeds, seedDisplayError))
+            {
+                activeSeedsChanged = true;
+                uiState.modelLoadError.clear();
+            }
+            else
+            {
+                uiState.modelLoadError = seedDisplayError;
+            }
+        }
+
         if (orbitDragging)
         {
             const double mouseDeltaX = mouseX - previousMouseX;
@@ -694,7 +783,7 @@ int main(int argc, char** argv)
                 );
             }
 
-            if (rightPressed && !previousRightPressed)
+            if (!uiState.automaticSegmentation && rightPressed && !previousRightPressed)
             {
                 double mouseFramebufferX = mouseX;
                 double mouseFramebufferY = mouseY;
@@ -728,7 +817,7 @@ int main(int argc, char** argv)
                             renderer,
                             mesh,
                             *pickedTriangle,
-                            selectedSeedTriangles,
+                            manualSeedTriangles,
                             uiState,
                             seedError
                         ))
@@ -743,10 +832,12 @@ int main(int argc, char** argv)
             }
         }
 
-        if (previewSettingsChanged || meshReloaded)
+        if (previewSettingsChanged || meshReloaded || activeSeedsChanged)
         {
             std::string previewError;
-            if (!refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, previewError))
+            const std::vector<uint32_t>& currentSeeds =
+                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
+            if (!refreshSegmentationPreview(renderer, mesh, currentSeeds, uiState, previewError))
             {
                 uiState.modelLoadError = previewError;
             }
@@ -755,11 +846,11 @@ int main(int argc, char** argv)
         if (uiActions.requestClearSeed)
         {
             renderer.clearSeedTriangle();
-            selectedSeedTriangles.clear();
+            manualSeedTriangles.clear();
             uiState.modelLoadError.clear();
 
             std::string previewError;
-            if (!refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, previewError))
+            if (!refreshSegmentationPreview(renderer, mesh, manualSeedTriangles, uiState, previewError))
             {
                 uiState.modelLoadError = previewError;
             }
@@ -767,7 +858,7 @@ int main(int argc, char** argv)
 
         if (uiActions.requestRandomSeed)
         {
-            const auto randomSeed = pickRandomSeedTriangle(mesh, selectedSeedTriangles, randomEngine);
+            const auto randomSeed = pickRandomSeedTriangle(mesh, manualSeedTriangles, randomEngine);
             if (!randomSeed.has_value())
             {
                 uiState.modelLoadError = "No unseeded triangles left. Use Clear seeds to reset.";
@@ -775,7 +866,7 @@ int main(int argc, char** argv)
             else
             {
                 std::string seedError;
-                if (addSeedTriangle(renderer, mesh, *randomSeed, selectedSeedTriangles, uiState, seedError))
+                if (addSeedTriangle(renderer, mesh, *randomSeed, manualSeedTriangles, uiState, seedError))
                 {
                     uiState.modelLoadError.clear();
                 }

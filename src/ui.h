@@ -24,6 +24,8 @@ struct RendererUiState
     float shininess = 64.0f;
 
     bool showSegmentation = false;
+    bool automaticSegmentation = false;
+    int automaticSeedCount = 8;
 
     std::string modelLoadError;
 };

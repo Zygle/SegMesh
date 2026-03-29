@@ -1,12 +1,16 @@
 #include "segmentation.h"
 
+#include <Eigen/Dense>
 #include <Eigen/Sparse>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <queue>
+#include <utility>
 #include <vector>
 
 namespace
@@ -16,6 +20,193 @@ double dot(const segmesh::Float3& a, const segmesh::Float3& b)
     return static_cast<double>(a.x) * static_cast<double>(b.x)
         + static_cast<double>(a.y) * static_cast<double>(b.y)
         + static_cast<double>(a.z) * static_cast<double>(b.z);
+}
+
+double squaredDistance(const segmesh::Float3& a, const Eigen::Vector3d& b)
+{
+    const double dx = static_cast<double>(a.x) - b.x();
+    const double dy = static_cast<double>(a.y) - b.y();
+    const double dz = static_cast<double>(a.z) - b.z();
+    return dx * dx + dy * dy + dz * dz;
+}
+
+double centroidDistance(const segmesh::Float3& a, const segmesh::Float3& b)
+{
+    const double dx = static_cast<double>(a.x) - static_cast<double>(b.x);
+    const double dy = static_cast<double>(a.y) - static_cast<double>(b.y);
+    const double dz = static_cast<double>(a.z) - static_cast<double>(b.z);
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double automaticSeedEdgeCost(
+    const segmesh::CpuMesh& mesh,
+    uint32_t faceIndex,
+    std::size_t edgeSlot,
+    uint32_t neighborIndex
+)
+{
+    const double normalDot = std::clamp(
+        dot(
+            mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
+            mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
+        ),
+        -1.0,
+        1.0
+    );
+    const double difference =
+        static_cast<double>(mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)].concavityScales[edgeSlot])
+        * (1.0 - normalDot);
+    const double geodesicStep = centroidDistance(
+        mesh.faceCentroids[static_cast<std::size_t>(faceIndex)],
+        mesh.faceCentroids[static_cast<std::size_t>(neighborIndex)]
+    );
+    return std::max(geodesicStep * (1.0 + difference), 1.0e-6);
+}
+
+void collectConnectedFaceComponents(
+    const segmesh::CpuMesh& mesh,
+    std::vector<int32_t>& outComponentIds,
+    std::vector<std::vector<uint32_t> >& outComponents
+)
+{
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.faceAdjacency.size());
+    outComponentIds.assign(faceCount, -1);
+    outComponents.clear();
+
+    std::vector<uint32_t> stack;
+    for (uint32_t startFace = 0; startFace < faceCount; ++startFace)
+    {
+        if (outComponentIds[static_cast<std::size_t>(startFace)] >= 0)
+        {
+            continue;
+        }
+
+        const int32_t componentId = static_cast<int32_t>(outComponents.size());
+        outComponents.emplace_back();
+        stack.clear();
+        stack.push_back(startFace);
+        outComponentIds[static_cast<std::size_t>(startFace)] = componentId;
+
+        while (!stack.empty())
+        {
+            const uint32_t faceIndex = stack.back();
+            stack.pop_back();
+            outComponents.back().push_back(faceIndex);
+
+            const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
+            for (const int32_t neighborIndex : adjacency.neighbors)
+            {
+                if (neighborIndex < 0)
+                {
+                    continue;
+                }
+
+                const std::size_t neighborOffset = static_cast<std::size_t>(neighborIndex);
+                if (outComponentIds[neighborOffset] >= 0)
+                {
+                    continue;
+                }
+
+                outComponentIds[neighborOffset] = componentId;
+                stack.push_back(static_cast<uint32_t>(neighborIndex));
+            }
+        }
+    }
+}
+
+void runFaceDijkstra(
+    const segmesh::CpuMesh& mesh,
+    uint32_t sourceFace,
+    int32_t componentId,
+    const std::vector<int32_t>& componentIds,
+    std::vector<double>& outDistances
+)
+{
+    const double infinity = std::numeric_limits<double>::infinity();
+    outDistances.assign(mesh.faceAdjacency.size(), infinity);
+
+    using QueueEntry = std::pair<double, uint32_t>;
+    std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry> > queue;
+    outDistances[static_cast<std::size_t>(sourceFace)] = 0.0;
+    queue.emplace(0.0, sourceFace);
+
+    while (!queue.empty())
+    {
+        const QueueEntry current = queue.top();
+        queue.pop();
+
+        const double currentDistance = current.first;
+        const uint32_t faceIndex = current.second;
+        if (currentDistance > outDistances[static_cast<std::size_t>(faceIndex)])
+        {
+            continue;
+        }
+
+        const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
+        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
+        {
+            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
+            if (neighborIndex < 0 || componentIds[static_cast<std::size_t>(neighborIndex)] != componentId)
+            {
+                continue;
+            }
+
+            const uint32_t neighborFace = static_cast<uint32_t>(neighborIndex);
+            const double candidateDistance =
+                currentDistance + automaticSeedEdgeCost(mesh, faceIndex, edgeSlot, neighborFace);
+            if (candidateDistance >= outDistances[static_cast<std::size_t>(neighborFace)])
+            {
+                continue;
+            }
+
+            outDistances[static_cast<std::size_t>(neighborFace)] = candidateDistance;
+            queue.emplace(candidateDistance, neighborFace);
+        }
+    }
+}
+
+uint32_t faceClosestToComponentCentroid(const segmesh::CpuMesh& mesh, const std::vector<uint32_t>& componentFaces)
+{
+    Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
+    for (const uint32_t faceIndex : componentFaces)
+    {
+        const segmesh::Float3& faceCentroid = mesh.faceCentroids[static_cast<std::size_t>(faceIndex)];
+        centroid += Eigen::Vector3d(faceCentroid.x, faceCentroid.y, faceCentroid.z);
+    }
+    centroid /= static_cast<double>(componentFaces.size());
+
+    uint32_t bestFace = componentFaces.front();
+    double bestDistance = std::numeric_limits<double>::infinity();
+    for (const uint32_t faceIndex : componentFaces)
+    {
+        const double distance = squaredDistance(mesh.faceCentroids[static_cast<std::size_t>(faceIndex)], centroid);
+        if (distance < bestDistance)
+        {
+            bestDistance = distance;
+            bestFace = faceIndex;
+        }
+    }
+
+    return bestFace;
+}
+
+uint32_t farthestReachableFace(const std::vector<uint32_t>& componentFaces, const std::vector<double>& distances)
+{
+    uint32_t bestFace = componentFaces.front();
+    double bestDistance = -1.0;
+    for (const uint32_t faceIndex : componentFaces)
+    {
+        const double distance = distances[static_cast<std::size_t>(faceIndex)];
+        if (!std::isfinite(distance) || distance <= bestDistance)
+        {
+            continue;
+        }
+
+        bestDistance = distance;
+        bestFace = faceIndex;
+    }
+
+    return bestFace;
 }
 
 bool componentHasSeed(
@@ -62,6 +253,122 @@ bool componentHasSeed(
 
 namespace segmesh
 {
+bool selectAutomaticSeedsCoarse(
+    const CpuMesh& mesh,
+    uint32_t approximateSeedCount,
+    std::vector<uint32_t>& outSeedTriangles,
+    std::string& error
+)
+{
+    outSeedTriangles.clear();
+    error.clear();
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (faceCount == 0)
+    {
+        error = "Cannot auto-segment an empty mesh.";
+        return false;
+    }
+
+    if (approximateSeedCount == 0)
+    {
+        error = "Automatic segmentation requires at least one target seed.";
+        return false;
+    }
+
+    if (mesh.faceCentroids.size() != faceCount || mesh.faceNormals.size() != faceCount
+        || mesh.faceAdjacency.size() != faceCount)
+    {
+        error = "Mesh topology data is incomplete. Reload the mesh before auto-segmenting.";
+        return false;
+    }
+
+    std::vector<int32_t> componentIds;
+    std::vector<std::vector<uint32_t> > components;
+    collectConnectedFaceComponents(mesh, componentIds, components);
+    if (components.empty())
+    {
+        error = "Automatic segmentation could not find any face components.";
+        return false;
+    }
+
+    const uint32_t targetSeedCount =
+        std::max<uint32_t>(approximateSeedCount, static_cast<uint32_t>(components.size()));
+    outSeedTriangles.reserve(targetSeedCount);
+
+    std::vector<bool> isSeed(faceCount, false);
+    std::vector<double> minDistances(faceCount, std::numeric_limits<double>::infinity());
+    std::vector<double> distances(faceCount, std::numeric_limits<double>::infinity());
+
+    for (std::size_t componentIndex = 0; componentIndex < components.size(); ++componentIndex)
+    {
+        const std::vector<uint32_t>& componentFaces = components[componentIndex];
+        // Paper Sec. 4.1: start from the face nearest the component centroid, then take the farthest face as s1.
+        const uint32_t centroidFace = faceClosestToComponentCentroid(mesh, componentFaces);
+        runFaceDijkstra(mesh, centroidFace, static_cast<int32_t>(componentIndex), componentIds, distances);
+
+        const uint32_t firstSeed = farthestReachableFace(componentFaces, distances);
+        outSeedTriangles.push_back(firstSeed);
+        isSeed[static_cast<std::size_t>(firstSeed)] = true;
+
+        runFaceDijkstra(mesh, firstSeed, static_cast<int32_t>(componentIndex), componentIds, distances);
+        for (const uint32_t faceIndex : componentFaces)
+        {
+            minDistances[static_cast<std::size_t>(faceIndex)] = distances[static_cast<std::size_t>(faceIndex)];
+        }
+    }
+
+    while (outSeedTriangles.size() < targetSeedCount)
+    {
+        uint32_t nextSeed = 0;
+        double nextSeedDistance = -1.0;
+
+        for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
+        {
+            if (isSeed[static_cast<std::size_t>(faceIndex)])
+            {
+                continue;
+            }
+
+            const double distance = minDistances[static_cast<std::size_t>(faceIndex)];
+            if (!std::isfinite(distance) || distance <= nextSeedDistance)
+            {
+                continue;
+            }
+
+            nextSeedDistance = distance;
+            nextSeed = faceIndex;
+        }
+
+        if (nextSeedDistance <= 1.0e-6)
+        {
+            break;
+        }
+
+        // Eq. (13): pick the face with maximal distance to its nearest existing seed.
+        outSeedTriangles.push_back(nextSeed);
+        isSeed[static_cast<std::size_t>(nextSeed)] = true;
+
+        const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
+        const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
+        runFaceDijkstra(mesh, nextSeed, componentId, componentIds, distances);
+        for (const uint32_t faceIndex : componentFaces)
+        {
+            // Keep min_i D(f_k, s_i) up to date for the next Eq. (13) selection step.
+            const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
+            minDistances[faceOffset] = std::min(minDistances[faceOffset], distances[faceOffset]);
+        }
+    }
+
+    if (outSeedTriangles.empty())
+    {
+        error = "Automatic segmentation did not produce any seed triangles.";
+        return false;
+    }
+
+    return true;
+}
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
