@@ -13,7 +13,7 @@ struct RendererUiState
     float cameraYaw = 0.0f;
     float cameraPitch = 0.35f;
     float rotateSpeed = 0.8f;
-    bool autoRotate = true;
+    bool autoRotate = false;
 
     float baseColor[3] = {0.78f, 0.78f, 0.78f};
     float lightDirection[3] = {-0.45f, -0.9f, -0.25f};

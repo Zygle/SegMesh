@@ -261,7 +261,7 @@ bool segmentMeshRandomWalk(
 
     for (uint32_t row = 0; row < unknownCount; ++row)
     {
-        // Paper Eq. (2)
+        // Eq. (2)
         // sum_j w_ij (x_i - x_j) = 0 for each non-seed face.
         triplets.emplace_back(
             static_cast<Eigen::Index>(row),
@@ -306,7 +306,7 @@ bool segmentMeshRandomWalk(
             return false;
         }
 
-        // Paper Eq. (3) assign the face to the seed with maximal probability.
+        // Eq. (3) assign the face to the seed with maximal probability.
         Eigen::Index bestLabel = 0;
         probabilities.row(rowIndex).maxCoeff(&bestLabel);
         const double bestValue = probabilities(rowIndex, bestLabel);
