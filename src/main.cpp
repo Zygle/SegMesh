@@ -117,6 +117,23 @@ float wrapAngle(float angle)
     return std::remainder(angle, 2.0f * kPi);
 }
 
+float clampOrbitPitch(float angle)
+{
+    // Stop just short of the pole so the orbit basis never flips and mirrors.
+    const float limit = 0.5f * kPi - 0.01f;
+    if (angle > limit)
+    {
+        return limit;
+    }
+
+    if (angle < -limit)
+    {
+        return -limit;
+    }
+
+    return angle;
+}
+
 bool rayTriangleIntersection(
     const segmesh::Float3& rayOrigin,
     const segmesh::Float3& rayDirection,
@@ -661,7 +678,8 @@ int main(int argc, char** argv)
             const double mouseDeltaX = mouseX - previousMouseX;
             const double mouseDeltaY = mouseY - previousMouseY;
             uiState.cameraYaw = wrapAngle(uiState.cameraYaw + static_cast<float>(mouseDeltaX) * kOrbitSensitivity);
-            uiState.cameraPitch += static_cast<float>(mouseDeltaY) * kOrbitSensitivity;
+            uiState.cameraPitch =
+                clampOrbitPitch(uiState.cameraPitch + static_cast<float>(mouseDeltaY) * kOrbitSensitivity);
         }
 
         if (!mouseOverUi)
