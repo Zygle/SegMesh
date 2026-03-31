@@ -1,6 +1,8 @@
 #include "ui.h"
 #include "imgui.h"
 
+#include <algorithm>
+
 namespace segmesh
 {
 RendererUiActions drawRendererPanel(
@@ -49,8 +51,26 @@ RendererUiActions drawRendererPanel(
     ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
     if (uiState.automaticSegmentation)
     {
-        ImGui::SliderInt("Auto seed target", &uiState.automaticSeedCount, 1, 64);
-        ImGui::TextUnformatted("Automatic mode uses coarse farthest-point seeding.");
+        int autoMode = static_cast<int>(uiState.automaticSegmentationMode);
+        const char* autoModeLabels[] = {"Coarse", "Fine"};
+        ImGui::Combo("Auto mode", &autoMode, autoModeLabels, IM_ARRAYSIZE(autoModeLabels));
+        uiState.automaticSegmentationMode = static_cast<AutomaticSegmentationMode>(autoMode);
+
+        const int minSeedCount =
+            uiState.automaticSegmentationMode == AutomaticSegmentationMode::Fine ? 20 : 1;
+        const int maxSeedCount =
+            uiState.automaticSegmentationMode == AutomaticSegmentationMode::Fine ? 200 : 64;
+        uiState.automaticSeedCount = std::clamp(uiState.automaticSeedCount, minSeedCount, maxSeedCount);
+        ImGui::SliderInt("Auto seed target", &uiState.automaticSeedCount, minSeedCount, maxSeedCount);
+
+        if (uiState.automaticSegmentationMode == AutomaticSegmentationMode::Coarse)
+        {
+            ImGui::TextUnformatted("Coarse mode uses farthest-point geodesic seeding.");
+        }
+        else
+        {
+            ImGui::TextUnformatted("Fine mode uses feature-biased dense auto seeding.");
+        }
     }
     if (uiState.showSegmentation && !uiState.automaticSegmentation && seedTriangleCount == 0)
     {

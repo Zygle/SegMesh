@@ -390,6 +390,47 @@ bool syncDisplayedSeedTriangles(
     return true;
 }
 
+bool rebuildAutomaticSeeds(
+    segmesh::Renderer& renderer,
+    const segmesh::CpuMesh& mesh,
+    const segmesh::RendererUiState& uiState,
+    std::vector<uint32_t>& automaticSeedTriangles,
+    std::string& error
+)
+{
+    const int minSeedCount =
+        uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine ? 20 : 1;
+    const uint32_t targetSeedCount = static_cast<uint32_t>(std::max(uiState.automaticSeedCount, minSeedCount));
+
+    bool success = false;
+    if (uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Coarse)
+    {
+        success = segmesh::selectAutomaticSeedsCoarse(mesh, targetSeedCount, automaticSeedTriangles, error);
+    }
+    else
+    {
+        success = segmesh::selectAutomaticSeedsFine(mesh, targetSeedCount, automaticSeedTriangles, error);
+    }
+
+    if (!success)
+    {
+        automaticSeedTriangles.clear();
+        renderer.clearSeedTriangle();
+        renderer.clearTriangleGroups();
+        return false;
+    }
+
+    if (!syncDisplayedSeedTriangles(renderer, mesh, automaticSeedTriangles, error))
+    {
+        automaticSeedTriangles.clear();
+        renderer.clearSeedTriangle();
+        renderer.clearTriangleGroups();
+        return false;
+    }
+
+    return true;
+}
+
 bool refreshSegmentationPreview(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -645,6 +686,8 @@ int main(int argc, char** argv)
 
         const bool previousShowSegmentation = uiState.showSegmentation;
         const bool previousAutomaticSegmentation = uiState.automaticSegmentation;
+        const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
+            uiState.automaticSegmentationMode;
         const int previousAutomaticSeedCount = uiState.automaticSeedCount;
         const std::vector<uint32_t>& seedsBeforeUi =
             activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
@@ -666,6 +709,8 @@ int main(int argc, char** argv)
         const bool previewSettingsChanged = uiState.showSegmentation != previousShowSegmentation;
         const bool automaticSegmentationChanged =
             uiState.automaticSegmentation != previousAutomaticSegmentation;
+        const bool automaticSegmentationModeChanged =
+            uiState.automaticSegmentationMode != previousAutomaticSegmentationMode;
         const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
@@ -718,31 +763,17 @@ int main(int argc, char** argv)
 
         bool activeSeedsChanged = false;
         if (uiState.automaticSegmentation
-            && (meshReloaded || automaticSegmentationChanged || automaticSeedCountChanged))
+            && (meshReloaded || automaticSegmentationChanged || automaticSegmentationModeChanged
+                || automaticSeedCountChanged))
         {
             std::string autoSeedError;
-            if (!segmesh::selectAutomaticSeedsCoarse(
-                    mesh,
-                    static_cast<uint32_t>(std::max(uiState.automaticSeedCount, 1)),
-                    automaticSeedTriangles,
-                    autoSeedError
-                ))
-            {
-                automaticSeedTriangles.clear();
-                renderer.clearSeedTriangle();
-                renderer.clearTriangleGroups();
-                uiState.modelLoadError = autoSeedError;
-            }
-            else if (syncDisplayedSeedTriangles(renderer, mesh, automaticSeedTriangles, autoSeedError))
+            if (rebuildAutomaticSeeds(renderer, mesh, uiState, automaticSeedTriangles, autoSeedError))
             {
                 activeSeedsChanged = true;
                 uiState.modelLoadError.clear();
             }
             else
             {
-                automaticSeedTriangles.clear();
-                renderer.clearSeedTriangle();
-                renderer.clearTriangleGroups();
                 uiState.modelLoadError = autoSeedError;
             }
         }

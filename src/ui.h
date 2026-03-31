@@ -7,6 +7,12 @@
 
 namespace segmesh
 {
+enum class AutomaticSegmentationMode : int
+{
+    Coarse = 0,
+    Fine = 1,
+};
+
 struct RendererUiState
 {
     float cameraDistance = 3.0f;
@@ -25,6 +31,7 @@ struct RendererUiState
 
     bool showSegmentation = false;
     bool automaticSegmentation = false;
+    AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;
     int automaticSeedCount = 8;
 
     std::string modelLoadError;

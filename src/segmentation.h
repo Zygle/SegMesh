@@ -15,6 +15,13 @@ bool selectAutomaticSeedsCoarse(
     std::string& error
 );
 
+bool selectAutomaticSeedsFine(
+    const CpuMesh& mesh,
+    uint32_t approximateSeedCount,
+    std::vector<uint32_t>& outSeedTriangles,
+    std::string& error
+);
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,

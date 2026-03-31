@@ -209,6 +209,117 @@ uint32_t farthestReachableFace(const std::vector<uint32_t>& componentFaces, cons
     return bestFace;
 }
 
+std::vector<double> computeFineSeedImportance(const segmesh::CpuMesh& mesh)
+{
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.faceCentroids.size());
+    std::vector<double> importance(faceCount, 1.0);
+    if (faceCount == 0)
+    {
+        return importance;
+    }
+
+    Eigen::Vector3d meshCentroid = Eigen::Vector3d::Zero();
+    for (const segmesh::Float3& faceCentroid : mesh.faceCentroids)
+    {
+        meshCentroid += Eigen::Vector3d(faceCentroid.x, faceCentroid.y, faceCentroid.z);
+    }
+    meshCentroid /= static_cast<double>(faceCount);
+
+    double averageArea = 0.0;
+    if (!mesh.faceAreas.empty())
+    {
+        for (const float faceArea : mesh.faceAreas)
+        {
+            averageArea += std::max(static_cast<double>(faceArea), 1.0e-12);
+        }
+        averageArea /= static_cast<double>(mesh.faceAreas.size());
+    }
+    averageArea = std::max(averageArea, 1.0e-12);
+
+    double maxRadius = 0.0;
+    for (const segmesh::Float3& faceCentroid : mesh.faceCentroids)
+    {
+        maxRadius = std::max(maxRadius, std::sqrt(squaredDistance(faceCentroid, meshCentroid)));
+    }
+    maxRadius = std::max(maxRadius, 1.0e-6);
+
+    for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
+    {
+        const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
+
+        double variationSum = 0.0;
+        double concavitySum = 0.0;
+        double edgeLengthSum = 0.0;
+        uint32_t neighborCount = 0;
+        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
+        {
+            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
+            if (neighborIndex < 0)
+            {
+                continue;
+            }
+
+            const double normalDot = std::clamp(
+                dot(
+                    mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
+                    mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
+                ),
+                -1.0,
+                1.0
+            );
+            variationSum += 1.0 - normalDot;
+            concavitySum += static_cast<double>(adjacency.concavityScales[edgeSlot]);
+            edgeLengthSum += static_cast<double>(adjacency.edgeLengths[edgeSlot]);
+            ++neighborCount;
+        }
+
+        const double normalVariation = neighborCount > 0 ? variationSum / static_cast<double>(neighborCount) : 0.0;
+        const double concavityBias = neighborCount > 0 ? concavitySum / static_cast<double>(neighborCount) : 0.2;
+        const double averageEdgeLength =
+            neighborCount > 0 ? edgeLengthSum / static_cast<double>(neighborCount) : 0.0;
+        const double radialDistance =
+            std::sqrt(squaredDistance(mesh.faceCentroids[static_cast<std::size_t>(faceIndex)], meshCentroid)) / maxRadius;
+
+        const double faceArea =
+            faceIndex < mesh.faceAreas.size() ? std::max(static_cast<double>(mesh.faceAreas[faceIndex]), 1.0e-12) : averageArea;
+        const double areaWeight = std::sqrt(faceArea / averageArea);
+
+        // Sec. 4.2.1: bias dense seeds toward protrusions and locally featured regions.
+        const double featureBias =
+            1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0);
+        const double spacingBias = 0.5 + 0.5 * std::clamp(areaWeight * (1.0 + averageEdgeLength), 0.0, 2.0);
+        importance[static_cast<std::size_t>(faceIndex)] = std::max(featureBias * spacingBias, 1.0e-6);
+    }
+
+    return importance;
+}
+
+uint32_t mostImportantFace(
+    const std::vector<uint32_t>& componentFaces,
+    const std::vector<double>& importance,
+    const std::vector<bool>& isSeed
+)
+{
+    uint32_t bestFace = componentFaces.front();
+    double bestImportance = -1.0;
+    for (const uint32_t faceIndex : componentFaces)
+    {
+        if (isSeed[static_cast<std::size_t>(faceIndex)])
+        {
+            continue;
+        }
+
+        const double faceImportance = importance[static_cast<std::size_t>(faceIndex)];
+        if (faceImportance > bestImportance)
+        {
+            bestImportance = faceImportance;
+            bestFace = faceIndex;
+        }
+    }
+
+    return bestFace;
+}
+
 bool componentHasSeed(
     const segmesh::CpuMesh& mesh,
     uint32_t startFace,
@@ -355,6 +466,125 @@ bool selectAutomaticSeedsCoarse(
         for (const uint32_t faceIndex : componentFaces)
         {
             // Keep min_i D(f_k, s_i) up to date for the next Eq. (13) selection step.
+            const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
+            minDistances[faceOffset] = std::min(minDistances[faceOffset], distances[faceOffset]);
+        }
+    }
+
+    if (outSeedTriangles.empty())
+    {
+        error = "Automatic segmentation did not produce any seed triangles.";
+        return false;
+    }
+
+    return true;
+}
+
+bool selectAutomaticSeedsFine(
+    const CpuMesh& mesh,
+    uint32_t approximateSeedCount,
+    std::vector<uint32_t>& outSeedTriangles,
+    std::string& error
+)
+{
+    outSeedTriangles.clear();
+    error.clear();
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (faceCount == 0)
+    {
+        error = "Cannot auto-segment an empty mesh.";
+        return false;
+    }
+
+    if (approximateSeedCount == 0)
+    {
+        error = "Automatic segmentation requires at least one target seed.";
+        return false;
+    }
+
+    if (mesh.faceCentroids.size() != faceCount || mesh.faceNormals.size() != faceCount
+        || mesh.faceAdjacency.size() != faceCount)
+    {
+        error = "Mesh topology data is incomplete. Reload the mesh before auto-segmenting.";
+        return false;
+    }
+
+    std::vector<int32_t> componentIds;
+    std::vector<std::vector<uint32_t> > components;
+    collectConnectedFaceComponents(mesh, componentIds, components);
+    if (components.empty())
+    {
+        error = "Automatic segmentation could not find any face components.";
+        return false;
+    }
+
+    const uint32_t targetSeedCount = std::min<uint32_t>(
+        faceCount,
+        std::max<uint32_t>(approximateSeedCount, static_cast<uint32_t>(components.size()))
+    );
+    outSeedTriangles.reserve(targetSeedCount);
+
+    const std::vector<double> importance = computeFineSeedImportance(mesh);
+    std::vector<bool> isSeed(faceCount, false);
+    std::vector<double> minDistances(faceCount, std::numeric_limits<double>::infinity());
+    std::vector<double> distances(faceCount, std::numeric_limits<double>::infinity());
+
+    // Sec. 4.2.1: seed each component first, then densify with many feature-biased samples.
+    for (std::size_t componentIndex = 0; componentIndex < components.size(); ++componentIndex)
+    {
+        const std::vector<uint32_t>& componentFaces = components[componentIndex];
+        const uint32_t initialSeed = mostImportantFace(componentFaces, importance, isSeed);
+        outSeedTriangles.push_back(initialSeed);
+        isSeed[static_cast<std::size_t>(initialSeed)] = true;
+
+        runFaceDijkstra(mesh, initialSeed, static_cast<int32_t>(componentIndex), componentIds, distances);
+        for (const uint32_t faceIndex : componentFaces)
+        {
+            minDistances[static_cast<std::size_t>(faceIndex)] = distances[static_cast<std::size_t>(faceIndex)];
+        }
+    }
+
+    while (outSeedTriangles.size() < targetSeedCount)
+    {
+        uint32_t nextSeed = 0;
+        double nextScore = -1.0;
+
+        for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
+        {
+            if (isSeed[static_cast<std::size_t>(faceIndex)])
+            {
+                continue;
+            }
+
+            const double distance = minDistances[static_cast<std::size_t>(faceIndex)];
+            if (!std::isfinite(distance))
+            {
+                continue;
+            }
+
+            // Sec. 4.2.1: approximate feature-sensitive sampling by combining spacing with local feature importance.
+            const double score = distance * importance[static_cast<std::size_t>(faceIndex)];
+            if (score > nextScore)
+            {
+                nextScore = score;
+                nextSeed = faceIndex;
+            }
+        }
+
+        if (nextScore <= 1.0e-6)
+        {
+            break;
+        }
+
+        outSeedTriangles.push_back(nextSeed);
+        isSeed[static_cast<std::size_t>(nextSeed)] = true;
+
+        const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
+        const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
+        runFaceDijkstra(mesh, nextSeed, componentId, componentIds, distances);
+        for (const uint32_t faceIndex : componentFaces)
+        {
             const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
             minDistances[faceOffset] = std::min(minDistances[faceOffset], distances[faceOffset]);
         }
