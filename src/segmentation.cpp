@@ -10,6 +10,7 @@
 #include <functional>
 #include <limits>
 #include <queue>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,14 @@ double dot(const segmesh::Float3& a, const segmesh::Float3& b)
         + static_cast<double>(a.y) * static_cast<double>(b.y)
         + static_cast<double>(a.z) * static_cast<double>(b.z);
 }
+
+struct FaceGraphEdgeInfo
+{
+    uint32_t face0 = 0;
+    uint32_t face1 = 0;
+    double edgeLength = 0.0;
+    double difference = 0.0;
+};
 
 double squaredDistance(const segmesh::Float3& a, const Eigen::Vector3d& b)
 {
@@ -320,6 +329,82 @@ uint32_t mostImportantFace(
     return bestFace;
 }
 
+bool buildFaceGraphEdges(
+    const segmesh::CpuMesh& mesh,
+    std::vector<FaceGraphEdgeInfo>& outEdges,
+    double& outAverageDifference,
+    std::string& error
+)
+{
+    outEdges.clear();
+    outAverageDifference = 0.0;
+    error.clear();
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (mesh.faceNormals.size() != faceCount || mesh.faceAdjacency.size() != faceCount)
+    {
+        error = "Mesh topology data is incomplete. Reload the mesh before segmenting.";
+        return false;
+    }
+
+    outEdges.reserve(static_cast<std::size_t>(faceCount) * 3 / 2);
+
+    double differenceSum = 0.0;
+    for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
+    {
+        const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
+        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
+        {
+            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
+            if (neighborIndex < 0 || faceIndex >= static_cast<uint32_t>(neighborIndex))
+            {
+                continue;
+            }
+
+            const double normalDot = std::clamp(
+                dot(
+                    mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
+                    mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
+                ),
+                -1.0,
+                1.0
+            );
+            const double difference = static_cast<double>(adjacency.concavityScales[edgeSlot]) * (1.0 - normalDot);
+            const double edgeLength = std::max(static_cast<double>(adjacency.edgeLengths[edgeSlot]), 1.0e-12);
+
+            outEdges.push_back({faceIndex, static_cast<uint32_t>(neighborIndex), edgeLength, difference});
+            differenceSum += difference;
+        }
+    }
+
+    if (outEdges.empty())
+    {
+        error = "The mesh face graph has no adjacency edges to solve over.";
+        return false;
+    }
+
+    outAverageDifference = std::max(differenceSum / static_cast<double>(outEdges.size()), 1.0e-12);
+    return true;
+}
+
+uint32_t findSegmentRoot(std::vector<uint32_t>& parents, uint32_t segment)
+{
+    uint32_t root = segment;
+    while (parents[static_cast<std::size_t>(root)] != root)
+    {
+        root = parents[static_cast<std::size_t>(root)];
+    }
+
+    while (parents[static_cast<std::size_t>(segment)] != segment)
+    {
+        const uint32_t parent = parents[static_cast<std::size_t>(segment)];
+        parents[static_cast<std::size_t>(segment)] = root;
+        segment = parent;
+    }
+
+    return root;
+}
+
 bool componentHasSeed(
     const segmesh::CpuMesh& mesh,
     uint32_t startFace,
@@ -599,6 +684,218 @@ bool selectAutomaticSeedsFine(
     return true;
 }
 
+bool mergeSegmentsByBoundaryCost(
+    const CpuMesh& mesh,
+    uint32_t targetSegmentCount,
+    double maxRelativeMergeCost,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+)
+{
+    error.clear();
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (faceCount == 0)
+    {
+        error = "Cannot merge segments on an empty mesh.";
+        return false;
+    }
+
+    if (inOutTriangleLabels.size() != faceCount)
+    {
+        error = "Segment label count does not match the face count.";
+        return false;
+    }
+
+    if (targetSegmentCount == 0)
+    {
+        error = "Merged segmentation must keep at least one segment.";
+        return false;
+    }
+
+    std::vector<FaceGraphEdgeInfo> edges;
+    double averageDifference = 0.0;
+    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
+    {
+        return false;
+    }
+    (void)averageDifference;
+
+    uint32_t initialSegmentCount = 0;
+    for (const uint32_t label : inOutTriangleLabels)
+    {
+        initialSegmentCount = std::max(initialSegmentCount, label + 1);
+    }
+
+    if (initialSegmentCount == 0)
+    {
+        error = "Segmentation labels are empty.";
+        return false;
+    }
+
+    for (const uint32_t label : inOutTriangleLabels)
+    {
+        if (label >= initialSegmentCount)
+        {
+            error = "Segmentation labels contain an out-of-range segment id.";
+            return false;
+        }
+    }
+
+    std::vector<uint32_t> parents(initialSegmentCount, 0);
+    for (uint32_t segmentIndex = 0; segmentIndex < initialSegmentCount; ++segmentIndex)
+    {
+        parents[static_cast<std::size_t>(segmentIndex)] = segmentIndex;
+    }
+
+    std::vector<bool> labelSeen(initialSegmentCount, false);
+    uint32_t currentSegmentCount = 0;
+    for (const uint32_t label : inOutTriangleLabels)
+    {
+        if (!labelSeen[static_cast<std::size_t>(label)])
+        {
+            labelSeen[static_cast<std::size_t>(label)] = true;
+            ++currentSegmentCount;
+        }
+    }
+
+    const auto pairIndex = [initialSegmentCount](uint32_t a, uint32_t b) -> std::size_t
+    {
+        return static_cast<std::size_t>(a) * static_cast<std::size_t>(initialSegmentCount)
+            + static_cast<std::size_t>(b);
+    };
+
+    while (currentSegmentCount > targetSegmentCount)
+    {
+        std::vector<bool> currentRoots(initialSegmentCount, false);
+        std::vector<double> boundaryDifference(initialSegmentCount, 0.0);
+        std::vector<double> boundaryLength(initialSegmentCount, 0.0);
+        std::vector<double> commonDifference(
+            static_cast<std::size_t>(initialSegmentCount) * static_cast<std::size_t>(initialSegmentCount),
+            0.0
+        );
+        std::vector<double> commonLength(commonDifference.size(), 0.0);
+
+        for (const FaceGraphEdgeInfo& edge : edges)
+        {
+            const uint32_t label0 = inOutTriangleLabels[static_cast<std::size_t>(edge.face0)];
+            const uint32_t label1 = inOutTriangleLabels[static_cast<std::size_t>(edge.face1)];
+            const uint32_t root0 = findSegmentRoot(parents, label0);
+            const uint32_t root1 = findSegmentRoot(parents, label1);
+            currentRoots[static_cast<std::size_t>(root0)] = true;
+            currentRoots[static_cast<std::size_t>(root1)] = true;
+
+            if (root0 == root1)
+            {
+                continue;
+            }
+
+            const double edgeBoundaryDifference = edge.edgeLength * edge.difference;
+            const double edgeBoundaryLength = edge.edgeLength;
+
+            boundaryDifference[static_cast<std::size_t>(root0)] += edgeBoundaryDifference;
+            boundaryDifference[static_cast<std::size_t>(root1)] += edgeBoundaryDifference;
+            boundaryLength[static_cast<std::size_t>(root0)] += edgeBoundaryLength;
+            boundaryLength[static_cast<std::size_t>(root1)] += edgeBoundaryLength;
+
+            const uint32_t a = std::min(root0, root1);
+            const uint32_t b = std::max(root0, root1);
+            commonDifference[pairIndex(a, b)] += edgeBoundaryDifference;
+            commonLength[pairIndex(a, b)] += edgeBoundaryLength;
+        }
+
+        using MergeCandidate = std::tuple<double, uint32_t, uint32_t>;
+        std::priority_queue<MergeCandidate, std::vector<MergeCandidate>, std::greater<MergeCandidate> > queue;
+
+        for (uint32_t segmentA = 0; segmentA < initialSegmentCount; ++segmentA)
+        {
+            if (!currentRoots[static_cast<std::size_t>(segmentA)])
+            {
+                continue;
+            }
+
+            for (uint32_t segmentB = segmentA + 1; segmentB < initialSegmentCount; ++segmentB)
+            {
+                if (!currentRoots[static_cast<std::size_t>(segmentB)])
+                {
+                    continue;
+                }
+
+                const std::size_t index = pairIndex(segmentA, segmentB);
+                if (commonLength[index] <= 1.0e-12)
+                {
+                    continue;
+                }
+
+                const double commonAverage = commonDifference[index] / commonLength[index];
+                // Eq. (14): compare the shared boundary against the combined segment boundaries.
+                const double unionDifference =
+                    boundaryDifference[static_cast<std::size_t>(segmentA)]
+                    + boundaryDifference[static_cast<std::size_t>(segmentB)]
+                    - commonDifference[index];
+                const double unionLength =
+                    boundaryLength[static_cast<std::size_t>(segmentA)]
+                    + boundaryLength[static_cast<std::size_t>(segmentB)]
+                    - commonLength[index];
+                if (unionLength <= 1.0e-12)
+                {
+                    continue;
+                }
+
+                const double unionAverage = unionDifference / unionLength;
+                if (unionAverage <= 1.0e-12)
+                {
+                    continue;
+                }
+
+                const double relativeCost = commonAverage / unionAverage;
+                if (!std::isfinite(relativeCost))
+                {
+                    continue;
+                }
+
+                queue.emplace(relativeCost, segmentA, segmentB);
+            }
+        }
+
+        if (queue.empty())
+        {
+            break;
+        }
+
+        const MergeCandidate bestMerge = queue.top();
+        const double bestCost = std::get<0>(bestMerge);
+        const uint32_t segmentA = std::get<1>(bestMerge);
+        const uint32_t segmentB = std::get<2>(bestMerge);
+        if (bestCost > maxRelativeMergeCost)
+        {
+            break;
+        }
+
+        const uint32_t keepRoot = std::min(segmentA, segmentB);
+        const uint32_t mergeRoot = std::max(segmentA, segmentB);
+        parents[static_cast<std::size_t>(mergeRoot)] = keepRoot;
+        --currentSegmentCount;
+    }
+
+    std::vector<int32_t> denseLabels(initialSegmentCount, -1);
+    uint32_t nextDenseLabel = 0;
+    for (uint32_t& label : inOutTriangleLabels)
+    {
+        const uint32_t root = findSegmentRoot(parents, label);
+        int32_t& denseLabel = denseLabels[static_cast<std::size_t>(root)];
+        if (denseLabel < 0)
+        {
+            denseLabel = static_cast<int32_t>(nextDenseLabel);
+            ++nextDenseLabel;
+        }
+
+        label = static_cast<uint32_t>(denseLabel);
+    }
+
+    return true;
+}
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
@@ -700,54 +997,12 @@ bool segmentMeshRandomWalk(
         return true;
     }
 
-    struct EdgeInfo
+    std::vector<FaceGraphEdgeInfo> edges;
+    double averageDifference = 0.0;
+    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
     {
-        uint32_t face0 = 0;
-        uint32_t face1 = 0;
-        double edgeLength = 0.0;
-        double difference = 0.0;
-    };
-
-    std::vector<EdgeInfo> edges;
-    edges.reserve(static_cast<std::size_t>(faceCount) * 3 / 2);
-
-    double differenceSum = 0.0;
-    // Build one undirected graph edge for each adjacent face pair.
-    for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
-    {
-        const FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
-        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
-        {
-            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
-            if (neighborIndex < 0 || faceIndex >= static_cast<uint32_t>(neighborIndex))
-            {
-                continue;
-            }
-
-            const double normalDot = std::clamp(
-                dot(
-                    mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
-                    mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
-                ),
-                -1.0,
-                1.0
-            );
-            const double difference = static_cast<double>(adjacency.concavityScales[edgeSlot]) * (1.0 - normalDot);
-            const double edgeLength = std::max(static_cast<double>(adjacency.edgeLengths[edgeSlot]), 1.0e-12);
-
-            //Eq. (1): after normalization affinities become the transition probabilities p{k,i}.
-            edges.push_back({faceIndex, static_cast<uint32_t>(neighborIndex), edgeLength, difference});
-            differenceSum += difference;
-        }
-    }
-
-    if (edges.empty())
-    {
-        error = "The mesh face graph has no adjacency edges to solve over.";
         return false;
     }
-
-    const double averageDifference = std::max(differenceSum / static_cast<double>(edges.size()), 1.0e-12);
 
     // Assemble a sparse Laplacian and one right-hand side column per seed.
     Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(
@@ -758,7 +1013,7 @@ bool segmentMeshRandomWalk(
     std::vector<Eigen::Triplet<double> > triplets;
     triplets.reserve(edges.size() * 4 + diagonal.size());
 
-    for (const EdgeInfo& edge : edges)
+    for (const FaceGraphEdgeInfo& edge : edges)
     {
         double weight = edge.edgeLength * std::exp(-(edge.difference / averageDifference));
         weight = std::max(weight, 1.0e-12);

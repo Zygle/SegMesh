@@ -70,6 +70,16 @@ RendererUiActions drawRendererPanel(
         else
         {
             ImGui::TextUnformatted("Fine mode uses feature-biased dense auto seeding.");
+            ImGui::Checkbox("Merge fine segments", &uiState.mergeFineSegments);
+            if (uiState.mergeFineSegments)
+            {
+                const int maxMergedSegmentCount = std::max(uiState.automaticSeedCount, 1);
+                uiState.mergeTargetSegmentCount =
+                    std::clamp(uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
+                ImGui::SliderInt("Target regions", &uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
+                ImGui::SliderFloat("Merge cost limit", &uiState.mergeCostThreshold, 0.05f, 2.0f);
+            }
+            ImGui::TextUnformatted("Lower merge cost means a weaker boundary, so it merges first.");
         }
     }
     if (uiState.showSegmentation && !uiState.automaticSegmentation && seedTriangleCount == 0)

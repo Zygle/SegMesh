@@ -33,6 +33,9 @@ struct RendererUiState
     bool automaticSegmentation = false;
     AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;
     int automaticSeedCount = 8;
+    bool mergeFineSegments = true;
+    int mergeTargetSegmentCount = 30;
+    float mergeCostThreshold = 0.5f;
 
     std::string modelLoadError;
 };

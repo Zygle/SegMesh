@@ -451,6 +451,22 @@ bool refreshSegmentationPreview(
         return false;
     }
 
+    if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
+        && uiState.mergeFineSegments)
+    {
+        const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.mergeTargetSegmentCount, 1));
+        if (!segmesh::mergeSegmentsByBoundaryCost(
+                mesh,
+                mergeTargetSegmentCount,
+                static_cast<double>(uiState.mergeCostThreshold),
+                triangleLabels,
+                error
+            ))
+        {
+            return false;
+        }
+    }
+
     uint32_t segmentCount = 0;
     for (const uint32_t label : triangleLabels)
     {
@@ -689,6 +705,9 @@ int main(int argc, char** argv)
         const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
             uiState.automaticSegmentationMode;
         const int previousAutomaticSeedCount = uiState.automaticSeedCount;
+        const bool previousMergeFineSegments = uiState.mergeFineSegments;
+        const int previousMergeTargetSegmentCount = uiState.mergeTargetSegmentCount;
+        const float previousMergeCostThreshold = uiState.mergeCostThreshold;
         const std::vector<uint32_t>& seedsBeforeUi =
             activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
@@ -712,6 +731,10 @@ int main(int argc, char** argv)
         const bool automaticSegmentationModeChanged =
             uiState.automaticSegmentationMode != previousAutomaticSegmentationMode;
         const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
+        const bool mergeSettingsChanged =
+            uiState.mergeFineSegments != previousMergeFineSegments
+            || uiState.mergeTargetSegmentCount != previousMergeTargetSegmentCount
+            || uiState.mergeCostThreshold != previousMergeCostThreshold;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)
@@ -863,7 +886,7 @@ int main(int argc, char** argv)
             }
         }
 
-        if (previewSettingsChanged || meshReloaded || activeSeedsChanged)
+        if (previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =

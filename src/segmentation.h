@@ -22,6 +22,14 @@ bool selectAutomaticSeedsFine(
     std::string& error
 );
 
+bool mergeSegmentsByBoundaryCost(
+    const CpuMesh& mesh,
+    uint32_t targetSegmentCount,
+    double maxRelativeMergeCost,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+);
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
