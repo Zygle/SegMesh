@@ -2,7 +2,7 @@
 
 SegMesh is a C++20 mesh viewer and segmentation prototype for experimenting with the random-walk mesh segmentation method described in:
 
-Y.-K. Lai, S.-M. Hu, R. R. Martin, P. L. Rosin, *Rapid and Effective Segmentation of 3D Models Using Random Walks*, Computer Aided Geometric Design 26 (2009) 665-679.
+Y.-K. Lai, S.-M. Hu, R. R. Martin, P. L. Rosin, [*Rapid and Effective Segmentation of 3D Models Using Random Walks*](https://cg.cs.tsinghua.edu.cn/papers/cagd_2009_segmentation.pdf), Computer Aided Geometric Design 26 (2009) 665-679.
 
 The project loads triangle meshes from `.obj`, builds face adjacency and per-face geometry on the CPU, solves segmentation on the face graph with Eigen sparse linear algebra, and renders both the source mesh and segmentation preview with bgfx.
 
@@ -91,7 +91,7 @@ You need these available to CMake:
 - pkg-config
 - Wayland client development headers/libraries
 
-On Linux this project currently assumes a Wayland runtime path in the renderer. The current renderer initialization in [renderer.cpp](/home/csabi/Documents/Önlab/SegMesh/src/renderer.cpp) explicitly requires Wayland handles.
+On Linux this project currently assumes a Wayland runtime path in the renderer. The current renderer initialization in [renderer.cpp](src/renderer.cpp) explicitly requires Wayland handles.
 
 ### bgfx build outputs
 
