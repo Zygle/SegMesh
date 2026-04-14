@@ -79,6 +79,12 @@ RendererUiActions drawRendererPanel(
                 ImGui::SliderInt("Target regions", &uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
                 ImGui::SliderFloat("Merge cost limit", &uiState.mergeCostThreshold, 0.05f, 2.0f);
             }
+            ImGui::Checkbox("Cleanup small segments", &uiState.cleanupSmallFineSegments);
+            if (uiState.cleanupSmallFineSegments)
+            {
+                uiState.minFineSegmentTriangles = std::clamp(uiState.minFineSegmentTriangles, 2, 128);
+                ImGui::SliderInt("Min triangles", &uiState.minFineSegmentTriangles, 2, 128);
+            }
             ImGui::TextUnformatted("Lower merge cost means a weaker boundary, so it merges first.");
         }
     }

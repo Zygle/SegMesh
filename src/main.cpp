@@ -467,6 +467,16 @@ bool refreshSegmentationPreview(
         }
     }
 
+    if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
+        && uiState.cleanupSmallFineSegments)
+    {
+        const uint32_t minTriangleCount = static_cast<uint32_t>(std::max(uiState.minFineSegmentTriangles, 2));
+        if (!segmesh::mergeSmallSegmentsByTriangleCount(mesh, minTriangleCount, triangleLabels, error))
+        {
+            return false;
+        }
+    }
+
     uint32_t segmentCount = 0;
     for (const uint32_t label : triangleLabels)
     {
@@ -708,6 +718,8 @@ int main(int argc, char** argv)
         const bool previousMergeFineSegments = uiState.mergeFineSegments;
         const int previousMergeTargetSegmentCount = uiState.mergeTargetSegmentCount;
         const float previousMergeCostThreshold = uiState.mergeCostThreshold;
+        const bool previousCleanupSmallFineSegments = uiState.cleanupSmallFineSegments;
+        const int previousMinFineSegmentTriangles = uiState.minFineSegmentTriangles;
         const std::vector<uint32_t>& seedsBeforeUi =
             activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
@@ -734,7 +746,9 @@ int main(int argc, char** argv)
         const bool mergeSettingsChanged =
             uiState.mergeFineSegments != previousMergeFineSegments
             || uiState.mergeTargetSegmentCount != previousMergeTargetSegmentCount
-            || uiState.mergeCostThreshold != previousMergeCostThreshold;
+            || uiState.mergeCostThreshold != previousMergeCostThreshold
+            || uiState.cleanupSmallFineSegments != previousCleanupSmallFineSegments
+            || uiState.minFineSegmentTriangles != previousMinFineSegmentTriangles;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)

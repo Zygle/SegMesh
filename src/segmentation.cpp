@@ -405,6 +405,34 @@ uint32_t findSegmentRoot(std::vector<uint32_t>& parents, uint32_t segment)
     return root;
 }
 
+void densifySegmentLabels(std::vector<uint32_t>& inOutTriangleLabels)
+{
+    uint32_t labelCount = 0;
+    for (const uint32_t label : inOutTriangleLabels)
+    {
+        labelCount = std::max(labelCount, label + 1);
+    }
+
+    if (labelCount == 0)
+    {
+        return;
+    }
+
+    std::vector<int32_t> denseLabels(labelCount, -1);
+    uint32_t nextDenseLabel = 0;
+    for (uint32_t& label : inOutTriangleLabels)
+    {
+        int32_t& denseLabel = denseLabels[static_cast<std::size_t>(label)];
+        if (denseLabel < 0)
+        {
+            denseLabel = static_cast<int32_t>(nextDenseLabel);
+            ++nextDenseLabel;
+        }
+
+        label = static_cast<uint32_t>(denseLabel);
+    }
+}
+
 bool componentHasSeed(
     const segmesh::CpuMesh& mesh,
     uint32_t startFace,
@@ -891,6 +919,173 @@ bool mergeSegmentsByBoundaryCost(
         }
 
         label = static_cast<uint32_t>(denseLabel);
+    }
+
+    return true;
+}
+
+bool mergeSmallSegmentsByTriangleCount(
+    const CpuMesh& mesh,
+    uint32_t minTriangleCount,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+)
+{
+    error.clear();
+
+    if (minTriangleCount <= 1)
+    {
+        return true;
+    }
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (faceCount == 0)
+    {
+        error = "Cannot clean up small segments on an empty mesh.";
+        return false;
+    }
+
+    if (inOutTriangleLabels.size() != faceCount)
+    {
+        error = "Segment label count does not match the face count.";
+        return false;
+    }
+
+    std::vector<FaceGraphEdgeInfo> edges;
+    double averageDifference = 0.0;
+    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
+    {
+        return false;
+    }
+    (void)averageDifference;
+
+    for (;;)
+    {
+        uint32_t segmentCount = 0;
+        for (const uint32_t label : inOutTriangleLabels)
+        {
+            segmentCount = std::max(segmentCount, label + 1);
+        }
+
+        if (segmentCount <= 1)
+        {
+            return true;
+        }
+
+        std::vector<uint32_t> segmentSizes(segmentCount, 0);
+        for (const uint32_t label : inOutTriangleLabels)
+        {
+            ++segmentSizes[static_cast<std::size_t>(label)];
+        }
+
+        struct NeighborStats
+        {
+            double sharedDifference = 0.0;
+            double sharedLength = 0.0;
+        };
+
+        std::vector<NeighborStats> neighborStats(
+            static_cast<std::size_t>(segmentCount) * static_cast<std::size_t>(segmentCount)
+        );
+        const auto pairIndex = [segmentCount](uint32_t a, uint32_t b) -> std::size_t
+        {
+            return static_cast<std::size_t>(a) * static_cast<std::size_t>(segmentCount)
+                + static_cast<std::size_t>(b);
+        };
+
+        for (const FaceGraphEdgeInfo& edge : edges)
+        {
+            const uint32_t label0 = inOutTriangleLabels[static_cast<std::size_t>(edge.face0)];
+            const uint32_t label1 = inOutTriangleLabels[static_cast<std::size_t>(edge.face1)];
+            if (label0 == label1)
+            {
+                continue;
+            }
+
+            const double edgeBoundaryDifference = edge.edgeLength * edge.difference;
+            NeighborStats& stats01 = neighborStats[pairIndex(label0, label1)];
+            NeighborStats& stats10 = neighborStats[pairIndex(label1, label0)];
+            stats01.sharedDifference += edgeBoundaryDifference;
+            stats01.sharedLength += edge.edgeLength;
+            stats10.sharedDifference += edgeBoundaryDifference;
+            stats10.sharedLength += edge.edgeLength;
+        }
+
+        uint32_t segmentToMerge = segmentCount;
+        uint32_t mergeTarget = segmentCount;
+        uint32_t smallestSegmentSize = std::numeric_limits<uint32_t>::max();
+        double bestBoundaryAverage = std::numeric_limits<double>::infinity();
+        double bestSharedLength = -1.0;
+
+        for (uint32_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
+        {
+            const uint32_t segmentSize = segmentSizes[static_cast<std::size_t>(segmentIndex)];
+            if (segmentSize == 0 || segmentSize >= minTriangleCount)
+            {
+                continue;
+            }
+
+            uint32_t bestNeighbor = segmentCount;
+            double bestNeighborAverage = std::numeric_limits<double>::infinity();
+            double bestNeighborSharedLength = -1.0;
+
+            for (uint32_t neighborIndex = 0; neighborIndex < segmentCount; ++neighborIndex)
+            {
+                if (neighborIndex == segmentIndex || segmentSizes[static_cast<std::size_t>(neighborIndex)] == 0)
+                {
+                    continue;
+                }
+
+                const NeighborStats& stats = neighborStats[pairIndex(segmentIndex, neighborIndex)];
+                if (stats.sharedLength <= 1.0e-12)
+                {
+                    continue;
+                }
+
+                const double boundaryAverage = stats.sharedDifference / stats.sharedLength;
+                if (boundaryAverage < bestNeighborAverage
+                    || (std::abs(boundaryAverage - bestNeighborAverage) <= 1.0e-12
+                        && stats.sharedLength > bestNeighborSharedLength))
+                {
+                    bestNeighbor = neighborIndex;
+                    bestNeighborAverage = boundaryAverage;
+                    bestNeighborSharedLength = stats.sharedLength;
+                }
+            }
+
+            if (bestNeighbor == segmentCount)
+            {
+                continue;
+            }
+
+            if (segmentSize < smallestSegmentSize
+                || (segmentSize == smallestSegmentSize && bestNeighborAverage < bestBoundaryAverage)
+                || (segmentSize == smallestSegmentSize
+                    && std::abs(bestNeighborAverage - bestBoundaryAverage) <= 1.0e-12
+                    && bestNeighborSharedLength > bestSharedLength))
+            {
+                segmentToMerge = segmentIndex;
+                mergeTarget = bestNeighbor;
+                smallestSegmentSize = segmentSize;
+                bestBoundaryAverage = bestNeighborAverage;
+                bestSharedLength = bestNeighborSharedLength;
+            }
+        }
+
+        if (segmentToMerge == segmentCount || mergeTarget == segmentCount)
+        {
+            break;
+        }
+
+        for (uint32_t& label : inOutTriangleLabels)
+        {
+            if (label == segmentToMerge)
+            {
+                label = mergeTarget;
+            }
+        }
+
+        densifySegmentLabels(inOutTriangleLabels);
     }
 
     return true;
