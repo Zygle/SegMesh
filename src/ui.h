@@ -36,6 +36,8 @@ struct RendererUiState
     bool mergeFineSegments = true;
     int mergeTargetSegmentCount = 30;
     float mergeCostThreshold = 0.5f;
+    bool cleanupSmallFineSegments = true;
+    int minFineSegmentTriangles = 24;
 
     std::string modelLoadError;
 };

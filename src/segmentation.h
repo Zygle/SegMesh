@@ -30,6 +30,13 @@ bool mergeSegmentsByBoundaryCost(
     std::string& error
 );
 
+bool mergeSmallSegmentsByTriangleCount(
+    const CpuMesh& mesh,
+    uint32_t minTriangleCount,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+);
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
