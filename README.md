@@ -71,17 +71,6 @@ The merge stage:
 
 This is based on Sec. 4.2.2 of the paper.
 
-## Repository layout
-
-- [CMakeLists.txt](/home/csabi/Documents/Önlab/SegMesh/CMakeLists.txt): build configuration, shader compilation, dependency wiring
-- [src/main.cpp](/home/csabi/Documents/Önlab/SegMesh/src/main.cpp): app entry point, input handling, UI flow, segmentation preview refresh
-- [src/obj_loader.cpp](/home/csabi/Documents/Önlab/SegMesh/src/obj_loader.cpp): OBJ import, normalization, face topology extraction
-- [src/renderer.cpp](/home/csabi/Documents/Önlab/SegMesh/src/renderer.cpp): bgfx rendering, group coloring, seed overlays
-- [src/segmentation.cpp](/home/csabi/Documents/Önlab/SegMesh/src/segmentation.cpp): automatic seeding, random-walk solve, merge pass
-- [src/ui.cpp](/home/csabi/Documents/Önlab/SegMesh/src/ui.cpp): ImGui controls
-- [assets/](/home/csabi/Documents/Önlab/SegMesh/assets): sample OBJ models and shaders
-- [scripts/build.sh](/home/csabi/Documents/Önlab/SegMesh/scripts/build.sh): simple release build script
-
 ## Dependencies
 
 ### Submodules used by the project
