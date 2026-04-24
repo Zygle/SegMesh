@@ -196,11 +196,9 @@ if(OPENMESH_INCLUDE_DIRS)
   target_include_directories(segmesh PRIVATE ${OPENMESH_INCLUDE_DIRS})
 endif()
 
-# Native window handle access for Wayland (and optional X11 fallback)
+# Native window handle access for Linux backends.
 target_compile_definitions(segmesh PRIVATE
   GLFW_INCLUDE_NONE
-  GLFW_EXPOSE_NATIVE_WAYLAND
-  GLFW_EXPOSE_NATIVE_X11
   $<$<CONFIG:Debug>:BX_CONFIG_DEBUG=1>
   $<$<NOT:$<CONFIG:Debug>>:BX_CONFIG_DEBUG=0>
 )
@@ -223,10 +221,41 @@ else()
   message(FATAL_ERROR "OpenMesh was found, but CMake did not expose OpenMesh link targets/libraries.")
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
-target_include_directories(segmesh PRIVATE ${WAYLAND_CLIENT_INCLUDE_DIRS})
-target_link_libraries(segmesh PRIVATE ${WAYLAND_CLIENT_LIBRARIES})
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(WAYLAND_CLIENT QUIET wayland-client)
+endif()
+
+find_package(X11 QUIET)
+
+set(SEGMESH_HAS_LINUX_WINDOW_BACKEND OFF)
+
+if(WAYLAND_CLIENT_FOUND)
+  message(STATUS "Including Wayland support")
+  target_compile_definitions(segmesh PRIVATE GLFW_EXPOSE_NATIVE_WAYLAND)
+  target_include_directories(segmesh PRIVATE ${WAYLAND_CLIENT_INCLUDE_DIRS})
+  target_link_libraries(segmesh PRIVATE ${WAYLAND_CLIENT_LIBRARIES})
+  set(SEGMESH_HAS_LINUX_WINDOW_BACKEND ON)
+endif()
+
+if(X11_FOUND)
+  message(STATUS "Including X11 support")
+  target_compile_definitions(segmesh PRIVATE GLFW_EXPOSE_NATIVE_X11)
+  if(X11_INCLUDE_DIR)
+    target_include_directories(segmesh PRIVATE ${X11_INCLUDE_DIR})
+  endif()
+  if(X11_LIBRARIES)
+    target_link_libraries(segmesh PRIVATE ${X11_LIBRARIES})
+  endif()
+  set(SEGMESH_HAS_LINUX_WINDOW_BACKEND ON)
+endif()
+
+if(NOT SEGMESH_HAS_LINUX_WINDOW_BACKEND)
+  message(FATAL_ERROR
+    "No supported Linux window backend development files were found. "
+    "Install Wayland and/or X11 development packages before building."
+  )
+endif()
 
 
 if(UNIX AND NOT APPLE)

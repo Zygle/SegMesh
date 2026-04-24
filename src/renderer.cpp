@@ -3,7 +3,6 @@
 #include <bgfx/platform.h>
 #include <GLFW/glfw3native.h>
 #include <bx/math.h>
-#include <wayland-client-core.h>
 
 #include <array>
 #include <cmath>
@@ -156,23 +155,50 @@ bool Renderer::initialize(GLFWwindow* window, uint32_t width, uint32_t height, s
         return false;
     }
 
-    wl_display* display = glfwGetWaylandDisplay();
-    wl_surface* surface = glfwGetWaylandWindow(window);
-    if (!display || !surface)
+    bgfx::PlatformData platformData{};
+    platformData.context = nullptr;
+    platformData.backBuffer = nullptr;
+    platformData.backBufferDS = nullptr;
+    bool detectedNativeBackend = false;
+
+#if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
+    if (!detectedNativeBackend)
     {
-        error = "Wayland backend is required by this sample.";
+        wl_display* display = glfwGetWaylandDisplay();
+        wl_surface* surface = glfwGetWaylandWindow(window);
+        if (display != nullptr && surface != nullptr)
+        {
+            platformData.ndt = display;
+            platformData.nwh = surface;
+            platformData.type = bgfx::NativeWindowHandleType::Wayland;
+            detectedNativeBackend = true;
+        }
+    }
+#endif
+
+#if defined(GLFW_EXPOSE_NATIVE_X11)
+    if (!detectedNativeBackend)
+    {
+        Display* display = glfwGetX11Display();
+        const Window x11Window = glfwGetX11Window(window);
+        if (display != nullptr && x11Window != 0)
+        {
+            platformData.ndt = display;
+            platformData.nwh = reinterpret_cast<void*>(static_cast<uintptr_t>(x11Window));
+            // bgfx treats X11 as the Linux default native handle type.
+            platformData.type = bgfx::NativeWindowHandleType::Default;
+            detectedNativeBackend = true;
+        }
+    }
+#endif
+
+    if (!detectedNativeBackend)
+    {
+        error = "Unable to detect a supported native window backend. Build with Wayland and/or X11 support.";
         return false;
     }
 
     bgfx::renderFrame();
-
-    bgfx::PlatformData platformData{};
-    platformData.ndt = display;
-    platformData.nwh = surface;
-    platformData.context = nullptr;
-    platformData.backBuffer = nullptr;
-    platformData.backBufferDS = nullptr;
-    platformData.type = bgfx::NativeWindowHandleType::Wayland;
 
     bgfx::Init init{};
     init.type = bgfx::RendererType::Vulkan;
