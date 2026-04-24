@@ -8,6 +8,12 @@
 
 namespace segmesh
 {
+enum class SegmentationModelType : int
+{
+    Graphical = 0,
+    Engineering = 1,
+};
+
 struct Float3
 {
     float x;
@@ -40,8 +46,14 @@ struct CpuMesh
     std::vector<uint32_t> indices;
     std::vector<Float3> faceCentroids;
     std::vector<Float3> faceNormals;
+    std::vector<float> faceGaussianCurvatures;
+    std::vector<float> faceMeanCurvatures;
     std::vector<float> faceAreas;
     std::vector<FaceAdjacency> faceAdjacency;
+    float averageGraphicalDifference = 1.0f;
+    float averageEngineeringNormalDifference = 1.0f;
+    float averageGaussianDifference = 1.0f;
+    float averageMeanDifference = 1.0f;
 };
 
 struct GpuMesh

@@ -23,6 +23,45 @@ double dot(const segmesh::Float3& a, const segmesh::Float3& b)
         + static_cast<double>(a.z) * static_cast<double>(b.z);
 }
 
+double edgeDifferenceForMode(
+    const segmesh::CpuMesh& mesh,
+    segmesh::SegmentationModelType segmentationModelType,
+    uint32_t faceIndex,
+    std::size_t edgeSlot,
+    uint32_t neighborIndex
+)
+{
+    const double normalDot = std::clamp(
+        dot(
+            mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
+            mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
+        ),
+        -1.0,
+        1.0
+    );
+
+    if (segmentationModelType == segmesh::SegmentationModelType::Graphical)
+    {
+        const double rawDifference =
+            static_cast<double>(mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)].concavityScales[edgeSlot])
+            * (1.0 - normalDot);
+        return rawDifference / std::max(static_cast<double>(mesh.averageGraphicalDifference), 1.0e-12);
+    }
+
+    const double normalDifference = (1.0 - normalDot)
+        / std::max(static_cast<double>(mesh.averageEngineeringNormalDifference), 1.0e-12);
+    const double gaussianDifference = std::abs(
+        static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(faceIndex)])
+            - static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(neighborIndex)])
+    ) / std::max(static_cast<double>(mesh.averageGaussianDifference), 1.0e-12);
+    const double meanDifference = std::abs(
+        static_cast<double>(mesh.faceMeanCurvatures[static_cast<std::size_t>(faceIndex)])
+            - static_cast<double>(mesh.faceMeanCurvatures[static_cast<std::size_t>(neighborIndex)])
+    ) / std::max(static_cast<double>(mesh.averageMeanDifference), 1.0e-12);
+
+    return std::max({normalDifference, gaussianDifference, meanDifference});
+}
+
 struct FaceGraphEdgeInfo
 {
     uint32_t face0 = 0;
@@ -49,22 +88,13 @@ double centroidDistance(const segmesh::Float3& a, const segmesh::Float3& b)
 
 double automaticSeedEdgeCost(
     const segmesh::CpuMesh& mesh,
+    segmesh::SegmentationModelType segmentationModelType,
     uint32_t faceIndex,
     std::size_t edgeSlot,
     uint32_t neighborIndex
 )
 {
-    const double normalDot = std::clamp(
-        dot(
-            mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
-            mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
-        ),
-        -1.0,
-        1.0
-    );
-    const double difference =
-        static_cast<double>(mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)].concavityScales[edgeSlot])
-        * (1.0 - normalDot);
+    const double difference = edgeDifferenceForMode(mesh, segmentationModelType, faceIndex, edgeSlot, neighborIndex);
     const double geodesicStep = centroidDistance(
         mesh.faceCentroids[static_cast<std::size_t>(faceIndex)],
         mesh.faceCentroids[static_cast<std::size_t>(neighborIndex)]
@@ -125,6 +155,7 @@ void collectConnectedFaceComponents(
 
 void runFaceDijkstra(
     const segmesh::CpuMesh& mesh,
+    segmesh::SegmentationModelType segmentationModelType,
     uint32_t sourceFace,
     int32_t componentId,
     const std::vector<int32_t>& componentIds,
@@ -162,7 +193,7 @@ void runFaceDijkstra(
 
             const uint32_t neighborFace = static_cast<uint32_t>(neighborIndex);
             const double candidateDistance =
-                currentDistance + automaticSeedEdgeCost(mesh, faceIndex, edgeSlot, neighborFace);
+                currentDistance + automaticSeedEdgeCost(mesh, segmentationModelType, faceIndex, edgeSlot, neighborFace);
             if (candidateDistance >= outDistances[static_cast<std::size_t>(neighborFace)])
             {
                 continue;
@@ -218,7 +249,10 @@ uint32_t farthestReachableFace(const std::vector<uint32_t>& componentFaces, cons
     return bestFace;
 }
 
-std::vector<double> computeFineSeedImportance(const segmesh::CpuMesh& mesh)
+std::vector<double> computeFineSeedImportance(
+    const segmesh::CpuMesh& mesh,
+    segmesh::SegmentationModelType segmentationModelType
+)
 {
     const uint32_t faceCount = static_cast<uint32_t>(mesh.faceCentroids.size());
     std::vector<double> importance(faceCount, 1.0);
@@ -288,14 +322,20 @@ std::vector<double> computeFineSeedImportance(const segmesh::CpuMesh& mesh)
             neighborCount > 0 ? edgeLengthSum / static_cast<double>(neighborCount) : 0.0;
         const double radialDistance =
             std::sqrt(squaredDistance(mesh.faceCentroids[static_cast<std::size_t>(faceIndex)], meshCentroid)) / maxRadius;
+        const double engineeringVariation =
+            (std::abs(static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(faceIndex)]))
+                / std::max(static_cast<double>(mesh.averageGaussianDifference), 1.0e-12))
+            + (std::abs(static_cast<double>(mesh.faceMeanCurvatures[static_cast<std::size_t>(faceIndex)]))
+                / std::max(static_cast<double>(mesh.averageMeanDifference), 1.0e-12));
 
         const double faceArea =
             faceIndex < mesh.faceAreas.size() ? std::max(static_cast<double>(mesh.faceAreas[faceIndex]), 1.0e-12) : averageArea;
         const double areaWeight = std::sqrt(faceArea / averageArea);
 
         // Sec. 4.2.1: bias dense seeds toward protrusions and locally featured regions.
-        const double featureBias =
-            1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0);
+        const double featureBias = segmentationModelType == segmesh::SegmentationModelType::Graphical
+            ? 1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0)
+            : 1.0 + 1.5 * normalVariation + 1.25 * engineeringVariation + 0.4 * radialDistance;
         const double spacingBias = 0.5 + 0.5 * std::clamp(areaWeight * (1.0 + averageEdgeLength), 0.0, 2.0);
         importance[static_cast<std::size_t>(faceIndex)] = std::max(featureBias * spacingBias, 1.0e-6);
     }
@@ -331,6 +371,7 @@ uint32_t mostImportantFace(
 
 bool buildFaceGraphEdges(
     const segmesh::CpuMesh& mesh,
+    segmesh::SegmentationModelType segmentationModelType,
     std::vector<FaceGraphEdgeInfo>& outEdges,
     double& outAverageDifference,
     std::string& error
@@ -349,7 +390,6 @@ bool buildFaceGraphEdges(
 
     outEdges.reserve(static_cast<std::size_t>(faceCount) * 3 / 2);
 
-    double differenceSum = 0.0;
     for (uint32_t faceIndex = 0; faceIndex < faceCount; ++faceIndex)
     {
         const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
@@ -361,19 +401,11 @@ bool buildFaceGraphEdges(
                 continue;
             }
 
-            const double normalDot = std::clamp(
-                dot(
-                    mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
-                    mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
-                ),
-                -1.0,
-                1.0
-            );
-            const double difference = static_cast<double>(adjacency.concavityScales[edgeSlot]) * (1.0 - normalDot);
+            const double difference =
+                edgeDifferenceForMode(mesh, segmentationModelType, faceIndex, edgeSlot, static_cast<uint32_t>(neighborIndex));
             const double edgeLength = std::max(static_cast<double>(adjacency.edgeLengths[edgeSlot]), 1.0e-12);
 
             outEdges.push_back({faceIndex, static_cast<uint32_t>(neighborIndex), edgeLength, difference});
-            differenceSum += difference;
         }
     }
 
@@ -383,7 +415,7 @@ bool buildFaceGraphEdges(
         return false;
     }
 
-    outAverageDifference = std::max(differenceSum / static_cast<double>(outEdges.size()), 1.0e-12);
+    outAverageDifference = 1.0;
     return true;
 }
 
@@ -479,6 +511,7 @@ namespace segmesh
 {
 bool selectAutomaticSeedsCoarse(
     const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
     uint32_t approximateSeedCount,
     std::vector<uint32_t>& outSeedTriangles,
     std::string& error
@@ -529,13 +562,27 @@ bool selectAutomaticSeedsCoarse(
         const std::vector<uint32_t>& componentFaces = components[componentIndex];
         // Paper Sec. 4.1: start from the face nearest the component centroid, then take the farthest face as s1.
         const uint32_t centroidFace = faceClosestToComponentCentroid(mesh, componentFaces);
-        runFaceDijkstra(mesh, centroidFace, static_cast<int32_t>(componentIndex), componentIds, distances);
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            centroidFace,
+            static_cast<int32_t>(componentIndex),
+            componentIds,
+            distances
+        );
 
         const uint32_t firstSeed = farthestReachableFace(componentFaces, distances);
         outSeedTriangles.push_back(firstSeed);
         isSeed[static_cast<std::size_t>(firstSeed)] = true;
 
-        runFaceDijkstra(mesh, firstSeed, static_cast<int32_t>(componentIndex), componentIds, distances);
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            firstSeed,
+            static_cast<int32_t>(componentIndex),
+            componentIds,
+            distances
+        );
         for (const uint32_t faceIndex : componentFaces)
         {
             minDistances[static_cast<std::size_t>(faceIndex)] = distances[static_cast<std::size_t>(faceIndex)];
@@ -575,7 +622,7 @@ bool selectAutomaticSeedsCoarse(
 
         const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
         const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
-        runFaceDijkstra(mesh, nextSeed, componentId, componentIds, distances);
+        runFaceDijkstra(mesh, segmentationModelType, nextSeed, componentId, componentIds, distances);
         for (const uint32_t faceIndex : componentFaces)
         {
             // Keep min_i D(f_k, s_i) up to date for the next Eq. (13) selection step.
@@ -595,6 +642,7 @@ bool selectAutomaticSeedsCoarse(
 
 bool selectAutomaticSeedsFine(
     const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
     uint32_t approximateSeedCount,
     std::vector<uint32_t>& outSeedTriangles,
     std::string& error
@@ -638,7 +686,7 @@ bool selectAutomaticSeedsFine(
     );
     outSeedTriangles.reserve(targetSeedCount);
 
-    const std::vector<double> importance = computeFineSeedImportance(mesh);
+    const std::vector<double> importance = computeFineSeedImportance(mesh, segmentationModelType);
     std::vector<bool> isSeed(faceCount, false);
     std::vector<double> minDistances(faceCount, std::numeric_limits<double>::infinity());
     std::vector<double> distances(faceCount, std::numeric_limits<double>::infinity());
@@ -651,7 +699,14 @@ bool selectAutomaticSeedsFine(
         outSeedTriangles.push_back(initialSeed);
         isSeed[static_cast<std::size_t>(initialSeed)] = true;
 
-        runFaceDijkstra(mesh, initialSeed, static_cast<int32_t>(componentIndex), componentIds, distances);
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            initialSeed,
+            static_cast<int32_t>(componentIndex),
+            componentIds,
+            distances
+        );
         for (const uint32_t faceIndex : componentFaces)
         {
             minDistances[static_cast<std::size_t>(faceIndex)] = distances[static_cast<std::size_t>(faceIndex)];
@@ -695,7 +750,7 @@ bool selectAutomaticSeedsFine(
 
         const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
         const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
-        runFaceDijkstra(mesh, nextSeed, componentId, componentIds, distances);
+        runFaceDijkstra(mesh, segmentationModelType, nextSeed, componentId, componentIds, distances);
         for (const uint32_t faceIndex : componentFaces)
         {
             const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
@@ -714,6 +769,7 @@ bool selectAutomaticSeedsFine(
 
 bool mergeSegmentsByBoundaryCost(
     const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
     uint32_t targetSegmentCount,
     double maxRelativeMergeCost,
     std::vector<uint32_t>& inOutTriangleLabels,
@@ -743,7 +799,7 @@ bool mergeSegmentsByBoundaryCost(
 
     std::vector<FaceGraphEdgeInfo> edges;
     double averageDifference = 0.0;
-    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
+    if (!buildFaceGraphEdges(mesh, segmentationModelType, edges, averageDifference, error))
     {
         return false;
     }
@@ -926,6 +982,7 @@ bool mergeSegmentsByBoundaryCost(
 
 bool mergeSmallSegmentsByTriangleCount(
     const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
     uint32_t minTriangleCount,
     std::vector<uint32_t>& inOutTriangleLabels,
     std::string& error
@@ -953,7 +1010,7 @@ bool mergeSmallSegmentsByTriangleCount(
 
     std::vector<FaceGraphEdgeInfo> edges;
     double averageDifference = 0.0;
-    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
+    if (!buildFaceGraphEdges(mesh, segmentationModelType, edges, averageDifference, error))
     {
         return false;
     }
@@ -1093,6 +1150,7 @@ bool mergeSmallSegmentsByTriangleCount(
 
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
     const std::vector<uint32_t>& seedTriangles,
     std::vector<uint32_t>& outTriangleLabels,
     std::string& error
@@ -1194,7 +1252,7 @@ bool segmentMeshRandomWalk(
 
     std::vector<FaceGraphEdgeInfo> edges;
     double averageDifference = 0.0;
-    if (!buildFaceGraphEdges(mesh, edges, averageDifference, error))
+    if (!buildFaceGraphEdges(mesh, segmentationModelType, edges, averageDifference, error))
     {
         return false;
     }

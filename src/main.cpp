@@ -405,11 +405,23 @@ bool rebuildAutomaticSeeds(
     bool success = false;
     if (uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Coarse)
     {
-        success = segmesh::selectAutomaticSeedsCoarse(mesh, targetSeedCount, automaticSeedTriangles, error);
+        success = segmesh::selectAutomaticSeedsCoarse(
+            mesh,
+            uiState.segmentationModelType,
+            targetSeedCount,
+            automaticSeedTriangles,
+            error
+        );
     }
     else
     {
-        success = segmesh::selectAutomaticSeedsFine(mesh, targetSeedCount, automaticSeedTriangles, error);
+        success = segmesh::selectAutomaticSeedsFine(
+            mesh,
+            uiState.segmentationModelType,
+            targetSeedCount,
+            automaticSeedTriangles,
+            error
+        );
     }
 
     if (!success)
@@ -446,7 +458,13 @@ bool refreshSegmentationPreview(
     }
 
     std::vector<uint32_t> triangleLabels;
-    if (!segmesh::segmentMeshRandomWalk(mesh, seedTriangles, triangleLabels, error))
+    if (!segmesh::segmentMeshRandomWalk(
+            mesh,
+            uiState.segmentationModelType,
+            seedTriangles,
+            triangleLabels,
+            error
+        ))
     {
         return false;
     }
@@ -457,6 +475,7 @@ bool refreshSegmentationPreview(
         const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.mergeTargetSegmentCount, 1));
         if (!segmesh::mergeSegmentsByBoundaryCost(
                 mesh,
+                uiState.segmentationModelType,
                 mergeTargetSegmentCount,
                 static_cast<double>(uiState.mergeCostThreshold),
                 triangleLabels,
@@ -471,7 +490,13 @@ bool refreshSegmentationPreview(
         && uiState.cleanupSmallFineSegments)
     {
         const uint32_t minTriangleCount = static_cast<uint32_t>(std::max(uiState.minFineSegmentTriangles, 2));
-        if (!segmesh::mergeSmallSegmentsByTriangleCount(mesh, minTriangleCount, triangleLabels, error))
+        if (!segmesh::mergeSmallSegmentsByTriangleCount(
+                mesh,
+                uiState.segmentationModelType,
+                minTriangleCount,
+                triangleLabels,
+                error
+            ))
         {
             return false;
         }
@@ -712,6 +737,7 @@ int main(int argc, char** argv)
 
         const bool previousShowSegmentation = uiState.showSegmentation;
         const bool previousAutomaticSegmentation = uiState.automaticSegmentation;
+        const segmesh::SegmentationModelType previousSegmentationModelType = uiState.segmentationModelType;
         const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
             uiState.automaticSegmentationMode;
         const int previousAutomaticSeedCount = uiState.automaticSeedCount;
@@ -742,6 +768,8 @@ int main(int argc, char** argv)
             uiState.automaticSegmentation != previousAutomaticSegmentation;
         const bool automaticSegmentationModeChanged =
             uiState.automaticSegmentationMode != previousAutomaticSegmentationMode;
+        const bool segmentationModelChanged =
+            uiState.segmentationModelType != previousSegmentationModelType;
         const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
         const bool mergeSettingsChanged =
             uiState.mergeFineSegments != previousMergeFineSegments
@@ -801,6 +829,7 @@ int main(int argc, char** argv)
         bool activeSeedsChanged = false;
         if (uiState.automaticSegmentation
             && (meshReloaded || automaticSegmentationChanged || automaticSegmentationModeChanged
+                || segmentationModelChanged
                 || automaticSeedCountChanged))
         {
             std::string autoSeedError;
@@ -900,7 +929,8 @@ int main(int argc, char** argv)
             }
         }
 
-        if (previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged)
+        if (previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged
+            || segmentationModelChanged)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =

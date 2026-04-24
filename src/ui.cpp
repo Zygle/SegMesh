@@ -48,6 +48,11 @@ RendererUiActions drawRendererPanel(
     ImGui::Text("Triangles: %u", triangleCount);
     ImGui::Separator();
     ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
+    int segmentationModel = static_cast<int>(uiState.segmentationModelType);
+    const char* segmentationModelLabels[] = {"Graphical", "Engineering"};
+    ImGui::TextUnformatted("Segmentation model");
+    ImGui::Combo("##SegmentationModel", &segmentationModel, segmentationModelLabels, IM_ARRAYSIZE(segmentationModelLabels));
+    uiState.segmentationModelType = static_cast<SegmentationModelType>(segmentationModel);
     ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
     if (uiState.automaticSegmentation)
     {

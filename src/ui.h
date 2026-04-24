@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mesh_types.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -31,6 +33,7 @@ struct RendererUiState
 
     bool showSegmentation = false;
     bool automaticSegmentation = false;
+    SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;
     AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;
     int automaticSeedCount = 8;
     bool mergeFineSegments = true;

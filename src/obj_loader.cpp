@@ -8,6 +8,7 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -18,6 +19,8 @@ using OpenMeshTriMesh = OpenMesh::TriMesh_ArrayKernelT<>;
 using segmesh::FaceAdjacency;
 using segmesh::Float3;
 using segmesh::MeshVertex;
+
+constexpr double kPi = 3.14159265358979323846;
 
 Eigen::Vector3f toEigen(const OpenMeshTriMesh::Point& point)
 {
@@ -38,6 +41,214 @@ Eigen::Vector3f normalizeSafe(const Eigen::Vector3f& v, const Eigen::Vector3f& f
     }
 
     return v / len;
+}
+
+double safeAngleBetween(const Eigen::Vector3d& a, const Eigen::Vector3d& b)
+{
+    const double lenProduct = a.norm() * b.norm();
+    if (lenProduct < 1.0e-16)
+    {
+        return 0.0;
+    }
+
+    const double cosine = std::clamp(a.dot(b) / lenProduct, -1.0, 1.0);
+    return std::acos(cosine);
+}
+
+double cotangentAtVertex(
+    const Eigen::Vector3d& vertex,
+    const Eigen::Vector3d& edgePoint0,
+    const Eigen::Vector3d& edgePoint1
+)
+{
+    const Eigen::Vector3d e0 = edgePoint0 - vertex;
+    const Eigen::Vector3d e1 = edgePoint1 - vertex;
+    const double crossNorm = e0.cross(e1).norm();
+    if (crossNorm < 1.0e-16)
+    {
+        return 0.0;
+    }
+
+    return e0.dot(e1) / crossNorm;
+}
+
+std::vector<double> smoothVertexScalarField(
+    const OpenMeshTriMesh& mesh,
+    const std::vector<double>& values,
+    int iterations
+)
+{
+    std::vector<double> smoothed = values;
+    std::vector<double> scratch(values.size(), 0.0);
+
+    for (int iteration = 0; iteration < iterations; ++iteration)
+    {
+        for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
+        {
+            double neighborSum = 0.0;
+            uint32_t neighborCount = 0;
+            for (auto vvIt = mesh.cvv_iter(vh); vvIt.is_valid(); ++vvIt)
+            {
+                neighborSum += smoothed[static_cast<std::size_t>(vvIt->idx())];
+                ++neighborCount;
+            }
+
+            const double currentValue = smoothed[static_cast<std::size_t>(vh.idx())];
+            if (neighborCount == 0)
+            {
+                scratch[static_cast<std::size_t>(vh.idx())] = currentValue;
+                continue;
+            }
+
+            const double neighborAverage = neighborSum / static_cast<double>(neighborCount);
+            scratch[static_cast<std::size_t>(vh.idx())] = 0.5 * currentValue + 0.5 * neighborAverage;
+        }
+
+        smoothed.swap(scratch);
+    }
+
+    return smoothed;
+}
+
+void computeFaceCurvatures(
+    const OpenMeshTriMesh& mesh,
+    const std::vector<Eigen::Vector3f>& preprocessedPositions,
+    const std::vector<int32_t>& faceMap,
+    std::vector<float>& outFaceGaussianCurvatures,
+    std::vector<float>& outFaceMeanCurvatures
+)
+{
+    const std::size_t vertexCount = mesh.n_vertices();
+    std::vector<double> vertexAreas(vertexCount, 0.0);
+    std::vector<double> vertexAngleSums(vertexCount, 0.0);
+    std::vector<Eigen::Vector3d> laplaceVectors(vertexCount, Eigen::Vector3d::Zero());
+
+    for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
+    {
+        std::array<OpenMeshTriMesh::VertexHandle, 3> faceVertices = {
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+        };
+        std::size_t corner = 0;
+        for (auto fvIt = mesh.cfv_iter(fh); fvIt.is_valid(); ++fvIt)
+        {
+            if (corner < faceVertices.size())
+            {
+                faceVertices[corner] = *fvIt;
+            }
+            ++corner;
+        }
+
+        if (corner != 3)
+        {
+            continue;
+        }
+
+        const Eigen::Vector3d p0 = preprocessedPositions[faceVertices[0].idx()].cast<double>();
+        const Eigen::Vector3d p1 = preprocessedPositions[faceVertices[1].idx()].cast<double>();
+        const Eigen::Vector3d p2 = preprocessedPositions[faceVertices[2].idx()].cast<double>();
+        const double area = 0.5 * (p1 - p0).cross(p2 - p0).norm();
+        const double areaContribution = area / 3.0;
+
+        const std::array<double, 3> angles = {
+            safeAngleBetween(p1 - p0, p2 - p0),
+            safeAngleBetween(p2 - p1, p0 - p1),
+            safeAngleBetween(p0 - p2, p1 - p2),
+        };
+
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            const std::size_t vertexIndex = static_cast<std::size_t>(faceVertices[i].idx());
+            vertexAreas[vertexIndex] += areaContribution;
+            vertexAngleSums[vertexIndex] += angles[i];
+        }
+    }
+
+    for (const OpenMeshTriMesh::EdgeHandle eh : mesh.edges())
+    {
+        const OpenMeshTriMesh::HalfedgeHandle heh0 = mesh.halfedge_handle(eh, 0);
+        const OpenMeshTriMesh::HalfedgeHandle heh1 = mesh.halfedge_handle(eh, 1);
+        const OpenMeshTriMesh::VertexHandle fromVh = mesh.from_vertex_handle(heh0);
+        const OpenMeshTriMesh::VertexHandle toVh = mesh.to_vertex_handle(heh0);
+
+        const Eigen::Vector3d pFrom = preprocessedPositions[fromVh.idx()].cast<double>();
+        const Eigen::Vector3d pTo = preprocessedPositions[toVh.idx()].cast<double>();
+
+        double cotangentSum = 0.0;
+        for (const OpenMeshTriMesh::HalfedgeHandle heh : {heh0, heh1})
+        {
+            if (mesh.is_boundary(heh))
+            {
+                continue;
+            }
+
+            const OpenMeshTriMesh::HalfedgeHandle nextHeh = mesh.next_halfedge_handle(heh);
+            const OpenMeshTriMesh::VertexHandle oppositeVh = mesh.to_vertex_handle(nextHeh);
+            const Eigen::Vector3d pOpposite = preprocessedPositions[oppositeVh.idx()].cast<double>();
+            cotangentSum += cotangentAtVertex(pOpposite, pFrom, pTo);
+        }
+
+        const Eigen::Vector3d edgeVector = pFrom - pTo;
+        laplaceVectors[static_cast<std::size_t>(fromVh.idx())] += cotangentSum * edgeVector;
+        laplaceVectors[static_cast<std::size_t>(toVh.idx())] -= cotangentSum * edgeVector;
+    }
+
+    std::vector<double> gaussianCurvatures(vertexCount, 0.0);
+    std::vector<double> meanCurvatures(vertexCount, 0.0);
+    for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
+    {
+        const std::size_t vertexIndex = static_cast<std::size_t>(vh.idx());
+        const double area = std::max(vertexAreas[vertexIndex], 1.0e-12);
+        const double targetAngle = mesh.is_boundary(vh) ? kPi : 2.0 * kPi;
+        gaussianCurvatures[vertexIndex] = (targetAngle - vertexAngleSums[vertexIndex]) / area;
+        meanCurvatures[vertexIndex] = laplaceVectors[vertexIndex].norm() / (4.0 * area);
+    }
+
+    gaussianCurvatures = smoothVertexScalarField(mesh, gaussianCurvatures, 2);
+    meanCurvatures = smoothVertexScalarField(mesh, meanCurvatures, 2);
+
+    outFaceGaussianCurvatures.assign(outFaceGaussianCurvatures.size(), 0.0f);
+    outFaceMeanCurvatures.assign(outFaceMeanCurvatures.size(), 0.0f);
+    for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
+    {
+        const int32_t outputFaceIndex = faceMap[fh.idx()];
+        if (outputFaceIndex < 0)
+        {
+            continue;
+        }
+
+        std::array<OpenMeshTriMesh::VertexHandle, 3> faceVertices = {
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+            OpenMeshTriMesh::VertexHandle(),
+        };
+        std::size_t corner = 0;
+        for (auto fvIt = mesh.cfv_iter(fh); fvIt.is_valid(); ++fvIt)
+        {
+            if (corner < faceVertices.size())
+            {
+                faceVertices[corner] = *fvIt;
+            }
+            ++corner;
+        }
+
+        if (corner != 3)
+        {
+            continue;
+        }
+
+        double gaussian = 0.0;
+        double mean = 0.0;
+        for (const OpenMeshTriMesh::VertexHandle vh : faceVertices)
+        {
+            gaussian += gaussianCurvatures[static_cast<std::size_t>(vh.idx())];
+            mean += meanCurvatures[static_cast<std::size_t>(vh.idx())];
+        }
+
+        outFaceGaussianCurvatures[static_cast<std::size_t>(outputFaceIndex)] = static_cast<float>(gaussian / 3.0);
+        outFaceMeanCurvatures[static_cast<std::size_t>(outputFaceIndex)] = static_cast<float>(mean / 3.0);
+    }
 }
 
 uint32_t packNormal(const Eigen::Vector3f& normal)
@@ -135,6 +346,8 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
     outMesh.indices.reserve(mesh.n_faces() * 3);
     outMesh.faceCentroids.reserve(mesh.n_faces());
     outMesh.faceNormals.reserve(mesh.n_faces());
+    outMesh.faceGaussianCurvatures.reserve(mesh.n_faces());
+    outMesh.faceMeanCurvatures.reserve(mesh.n_faces());
     outMesh.faceAreas.reserve(mesh.n_faces());
     std::vector<int32_t> faceMap(mesh.n_faces(), -1);
 
@@ -181,6 +394,16 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         faceMap[fh.idx()] = static_cast<int32_t>(outputFaceIndex);
     }
 
+    outMesh.faceGaussianCurvatures.resize(outMesh.faceCentroids.size(), 0.0f);
+    outMesh.faceMeanCurvatures.resize(outMesh.faceCentroids.size(), 0.0f);
+    computeFaceCurvatures(
+        mesh,
+        preprocessedPositions,
+        faceMap,
+        outMesh.faceGaussianCurvatures,
+        outMesh.faceMeanCurvatures
+    );
+
     outMesh.faceAdjacency.resize(outMesh.faceCentroids.size());
     for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
     {
@@ -218,6 +441,55 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         }
 
         outMesh.faceAdjacency[static_cast<std::size_t>(outputFaceIndex)] = adjacency;
+    }
+
+    double graphicalDifferenceSum = 0.0;
+    double engineeringNormalDifferenceSum = 0.0;
+    double gaussianDifferenceSum = 0.0;
+    double meanDifferenceSum = 0.0;
+    uint32_t edgeCount = 0;
+    for (std::size_t faceIndex = 0; faceIndex < outMesh.faceAdjacency.size(); ++faceIndex)
+    {
+        const FaceAdjacency& adjacency = outMesh.faceAdjacency[faceIndex];
+        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
+        {
+            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
+            if (neighborIndex < 0 || faceIndex >= static_cast<std::size_t>(neighborIndex))
+            {
+                continue;
+            }
+
+            const double normalDot = std::clamp(
+                static_cast<double>(outMesh.faceNormals[faceIndex].x) * static_cast<double>(outMesh.faceNormals[neighborIndex].x)
+                    + static_cast<double>(outMesh.faceNormals[faceIndex].y) * static_cast<double>(outMesh.faceNormals[neighborIndex].y)
+                    + static_cast<double>(outMesh.faceNormals[faceIndex].z) * static_cast<double>(outMesh.faceNormals[neighborIndex].z),
+                -1.0,
+                1.0
+            );
+            const double rawNormalDifference = 1.0 - normalDot;
+
+            graphicalDifferenceSum += static_cast<double>(adjacency.concavityScales[edgeSlot]) * rawNormalDifference;
+            engineeringNormalDifferenceSum += rawNormalDifference;
+            gaussianDifferenceSum += std::abs(
+                static_cast<double>(outMesh.faceGaussianCurvatures[faceIndex])
+                    - static_cast<double>(outMesh.faceGaussianCurvatures[static_cast<std::size_t>(neighborIndex)])
+            );
+            meanDifferenceSum += std::abs(
+                static_cast<double>(outMesh.faceMeanCurvatures[faceIndex])
+                    - static_cast<double>(outMesh.faceMeanCurvatures[static_cast<std::size_t>(neighborIndex)])
+            );
+            ++edgeCount;
+        }
+    }
+
+    if (edgeCount > 0)
+    {
+        const double inverseEdgeCount = 1.0 / static_cast<double>(edgeCount);
+        outMesh.averageGraphicalDifference = static_cast<float>(std::max(graphicalDifferenceSum * inverseEdgeCount, 1.0e-12));
+        outMesh.averageEngineeringNormalDifference =
+            static_cast<float>(std::max(engineeringNormalDifferenceSum * inverseEdgeCount, 1.0e-12));
+        outMesh.averageGaussianDifference = static_cast<float>(std::max(gaussianDifferenceSum * inverseEdgeCount, 1.0e-12));
+        outMesh.averageMeanDifference = static_cast<float>(std::max(meanDifferenceSum * inverseEdgeCount, 1.0e-12));
     }
 
     if (outMesh.vertices.empty() || outMesh.indices.empty())
