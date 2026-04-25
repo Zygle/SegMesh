@@ -28,12 +28,54 @@ foreach(dep IN ITEMS bgfx bx bimg glfw)
 endforeach()
 
 # -------------------------
-# GLFW (build from submodule, Wayland support is decided by system deps)
+# Native Linux window backends
+# -------------------------
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(WAYLAND_CLIENT QUIET wayland-client)
+endif()
+
+find_program(WAYLAND_SCANNER_EXECUTABLE wayland-scanner)
+find_package(X11 QUIET)
+
+set(SEGMESH_BUILD_WAYLAND OFF)
+if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
+  set(SEGMESH_BUILD_WAYLAND ON)
+endif()
+
+set(SEGMESH_BUILD_X11 OFF)
+if(X11_FOUND)
+  set(SEGMESH_BUILD_X11 ON)
+endif()
+
+if(NOT SEGMESH_BUILD_WAYLAND AND NOT SEGMESH_BUILD_X11)
+  message(FATAL_ERROR
+    "No supported Linux window backend development files were found. "
+    "Install Wayland and/or X11 development packages before building."
+  )
+endif()
+
+if(SEGMESH_BUILD_WAYLAND)
+  message(STATUS "Including Wayland support")
+else()
+  message(STATUS "Wayland support disabled")
+endif()
+
+if(SEGMESH_BUILD_X11)
+  message(STATUS "Including X11 support")
+else()
+  message(STATUS "X11 support disabled")
+endif()
+
+# -------------------------
+# GLFW
 # -------------------------
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND ${SEGMESH_BUILD_WAYLAND} CACHE BOOL "" FORCE)
+set(GLFW_BUILD_X11 ${SEGMESH_BUILD_X11} CACHE BOOL "" FORCE)
 add_subdirectory(submods/glfw)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
@@ -221,25 +263,13 @@ else()
   message(FATAL_ERROR "OpenMesh was found, but CMake did not expose OpenMesh link targets/libraries.")
 endif()
 
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-  pkg_check_modules(WAYLAND_CLIENT QUIET wayland-client)
-endif()
-
-find_package(X11 QUIET)
-
-set(SEGMESH_HAS_LINUX_WINDOW_BACKEND OFF)
-
-if(WAYLAND_CLIENT_FOUND)
-  message(STATUS "Including Wayland support")
+if(SEGMESH_BUILD_WAYLAND)
   target_compile_definitions(segmesh PRIVATE GLFW_EXPOSE_NATIVE_WAYLAND)
   target_include_directories(segmesh PRIVATE ${WAYLAND_CLIENT_INCLUDE_DIRS})
   target_link_libraries(segmesh PRIVATE ${WAYLAND_CLIENT_LIBRARIES})
-  set(SEGMESH_HAS_LINUX_WINDOW_BACKEND ON)
 endif()
 
-if(X11_FOUND)
-  message(STATUS "Including X11 support")
+if(SEGMESH_BUILD_X11)
   target_compile_definitions(segmesh PRIVATE GLFW_EXPOSE_NATIVE_X11)
   if(X11_INCLUDE_DIR)
     target_include_directories(segmesh PRIVATE ${X11_INCLUDE_DIR})
@@ -247,14 +277,6 @@ if(X11_FOUND)
   if(X11_LIBRARIES)
     target_link_libraries(segmesh PRIVATE ${X11_LIBRARIES})
   endif()
-  set(SEGMESH_HAS_LINUX_WINDOW_BACKEND ON)
-endif()
-
-if(NOT SEGMESH_HAS_LINUX_WINDOW_BACKEND)
-  message(FATAL_ERROR
-    "No supported Linux window backend development files were found. "
-    "Install Wayland and/or X11 development packages before building."
-  )
 endif()
 
 
