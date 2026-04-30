@@ -40,6 +40,11 @@ struct FaceAdjacency
     std::array<float, 3> concavityScales = {0.2f, 0.2f, 0.2f};
 };
 
+struct FaceRenderEdges
+{
+    std::array<std::array<uint32_t, 2>, 3> indices = {{{0, 0}, {0, 0}, {0, 0}}};
+};
+
 struct CpuMesh
 {
     std::vector<MeshVertex> vertices;
@@ -50,6 +55,7 @@ struct CpuMesh
     std::vector<float> faceMeanCurvatures;
     std::vector<float> faceAreas;
     std::vector<FaceAdjacency> faceAdjacency;
+    std::vector<FaceRenderEdges> faceRenderEdges;
     float averageGraphicalDifference = 1.0f;
     float averageEngineeringNormalDifference = 1.0f;
     float averageGaussianDifference = 1.0f;

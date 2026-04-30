@@ -21,6 +21,7 @@ using segmesh::Float3;
 using segmesh::MeshVertex;
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr float kSmoothNormalDotThreshold = 0.5f;
 
 Eigen::Vector3f toEigen(const OpenMeshTriMesh::Point& point)
 {
@@ -264,6 +265,27 @@ uint32_t packNormal(const Eigen::Vector3f& normal)
     const uint32_t nz = toByte(normal.z());
     return nx | (ny << 8) | (nz << 16) | (0xffu << 24);
 }
+
+Eigen::Vector3f cornerRenderNormal(
+    const OpenMeshTriMesh& mesh,
+    const OpenMeshTriMesh::FaceHandle fh,
+    const OpenMeshTriMesh::VertexHandle vh
+)
+{
+    const Eigen::Vector3f faceNormal = normalizeSafe(toEigen(mesh.normal(fh)));
+    Eigen::Vector3f normalSum = Eigen::Vector3f::Zero();
+
+    for (auto vfIt = mesh.cvf_iter(vh); vfIt.is_valid(); ++vfIt)
+    {
+        const Eigen::Vector3f neighborNormal = normalizeSafe(toEigen(mesh.normal(*vfIt)));
+        if (faceNormal.dot(neighborNormal) >= kSmoothNormalDotThreshold)
+        {
+            normalSum += neighborNormal;
+        }
+    }
+
+    return normalizeSafe(normalSum, faceNormal);
+}
 }
 
 namespace segmesh
@@ -324,32 +346,17 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         preprocessedPositions[vh.idx()] = positions.col(vh.idx());
     }
 
-    outMesh.vertices.reserve(vertexCount);
-    std::vector<uint32_t> vertexMap(vertexCount, std::numeric_limits<uint32_t>::max());
-
-    for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
-    {
-        const Eigen::Vector3f p = preprocessedPositions[vh.idx()];
-        const Eigen::Vector3f n = normalizeSafe(toEigen(mesh.normal(vh)));
-
-        MeshVertex vertex{};
-        vertex.x = p.x();
-        vertex.y = p.y();
-        vertex.z = p.z();
-        vertex.normal = packNormal(n);
-
-        const uint32_t index = static_cast<uint32_t>(outMesh.vertices.size());
-        outMesh.vertices.push_back(vertex);
-        vertexMap[vh.idx()] = index;
-    }
-
     outMesh.indices.reserve(mesh.n_faces() * 3);
+    outMesh.vertices.reserve(mesh.n_faces() * 3);
     outMesh.faceCentroids.reserve(mesh.n_faces());
     outMesh.faceNormals.reserve(mesh.n_faces());
     outMesh.faceGaussianCurvatures.reserve(mesh.n_faces());
     outMesh.faceMeanCurvatures.reserve(mesh.n_faces());
     outMesh.faceAreas.reserve(mesh.n_faces());
+    outMesh.faceRenderEdges.reserve(mesh.n_faces());
     std::vector<int32_t> faceMap(mesh.n_faces(), -1);
+    std::vector<std::array<int32_t, 3> > faceVertexIndices;
+    faceVertexIndices.reserve(mesh.n_faces());
 
     for (const OpenMeshTriMesh::FaceHandle fh : mesh.faces())
     {
@@ -373,14 +380,6 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
             continue;
         }
 
-        const uint32_t i0 = vertexMap[faceVertices[0].idx()];
-        const uint32_t i1 = vertexMap[faceVertices[1].idx()];
-        const uint32_t i2 = vertexMap[faceVertices[2].idx()];
-        const uint32_t outputFaceIndex = static_cast<uint32_t>(outMesh.faceCentroids.size());
-        outMesh.indices.push_back(i0);
-        outMesh.indices.push_back(i1);
-        outMesh.indices.push_back(i2);
-
         const Eigen::Vector3f p0 = preprocessedPositions[faceVertices[0].idx()];
         const Eigen::Vector3f p1 = preprocessedPositions[faceVertices[1].idx()];
         const Eigen::Vector3f p2 = preprocessedPositions[faceVertices[2].idx()];
@@ -388,9 +387,33 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         const Eigen::Vector3f faceNormal = normalizeSafe(toEigen(mesh.normal(fh)));
         const float area = 0.5f * ((p1 - p0).cross(p2 - p0)).norm();
 
+        const uint32_t i0 = static_cast<uint32_t>(outMesh.vertices.size());
+        const std::array<Eigen::Vector3f, 3> renderPositions = {p0, p1, p2};
+        for (std::size_t i = 0; i < renderPositions.size(); ++i)
+        {
+            const Eigen::Vector3f renderNormal = cornerRenderNormal(mesh, fh, faceVertices[i]);
+            MeshVertex vertex{};
+            vertex.x = renderPositions[i].x();
+            vertex.y = renderPositions[i].y();
+            vertex.z = renderPositions[i].z();
+            vertex.normal = packNormal(renderNormal);
+            outMesh.vertices.push_back(vertex);
+        }
+
+        const uint32_t outputFaceIndex = static_cast<uint32_t>(outMesh.faceCentroids.size());
+        outMesh.indices.push_back(i0);
+        outMesh.indices.push_back(i0 + 1);
+        outMesh.indices.push_back(i0 + 2);
+
         outMesh.faceCentroids.push_back(toFloat3(centroid));
         outMesh.faceNormals.push_back(toFloat3(faceNormal));
         outMesh.faceAreas.push_back(area);
+        outMesh.faceRenderEdges.push_back({});
+        faceVertexIndices.push_back({
+            faceVertices[0].idx(),
+            faceVertices[1].idx(),
+            faceVertices[2].idx(),
+        });
         faceMap[fh.idx()] = static_cast<int32_t>(outputFaceIndex);
     }
 
@@ -423,6 +446,21 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
             const OpenMeshTriMesh::VertexHandle toVh = mesh.to_vertex_handle(heh);
             const Eigen::Vector3f edgeVector = preprocessedPositions[toVh.idx()] - preprocessedPositions[fromVh.idx()];
             adjacency.edgeLengths[edgeIndex] = edgeVector.norm();
+            FaceRenderEdges& renderEdges = outMesh.faceRenderEdges[static_cast<std::size_t>(outputFaceIndex)];
+            const std::array<int32_t, 3>& localVertices = faceVertexIndices[static_cast<std::size_t>(outputFaceIndex)];
+            for (std::size_t corner = 0; corner < localVertices.size(); ++corner)
+            {
+                const uint32_t renderIndex =
+                    static_cast<uint32_t>(static_cast<std::size_t>(outputFaceIndex) * 3 + corner);
+                if (localVertices[corner] == fromVh.idx())
+                {
+                    renderEdges.indices[edgeIndex][0] = renderIndex;
+                }
+                if (localVertices[corner] == toVh.idx())
+                {
+                    renderEdges.indices[edgeIndex][1] = renderIndex;
+                }
+            }
 
             if (!mesh.is_boundary(oppositeHeh))
             {

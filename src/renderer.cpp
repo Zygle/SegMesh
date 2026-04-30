@@ -11,7 +11,6 @@
 #include <fstream>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -162,19 +161,6 @@ segmesh::Float3 colorForGroup(uint32_t groupIndex)
     return kGroupPalette[static_cast<std::size_t>(groupIndex % kGroupPalette.size())];
 }
 
-struct SegmentBorderEdge
-{
-    uint32_t groupIndex = 0;
-    bool borderRecorded = false;
-};
-
-uint64_t edgeKey(uint32_t index0, uint32_t index1)
-{
-    const uint32_t low = index0 < index1 ? index0 : index1;
-    const uint32_t high = index0 < index1 ? index1 : index0;
-    return (static_cast<uint64_t>(low) << 32) | static_cast<uint64_t>(high);
-}
-
 std::vector<uint32_t> buildSegmentBorderIndices(
     const segmesh::CpuMesh& mesh,
     const std::vector<uint32_t>& triangleGroups
@@ -184,30 +170,30 @@ std::vector<uint32_t> buildSegmentBorderIndices(
     std::vector<uint32_t> segmentBorderIndices;
     segmentBorderIndices.reserve(triangleCount * 2);
 
-    std::unordered_map<uint64_t, SegmentBorderEdge> edges;
-    edges.reserve(static_cast<std::size_t>(triangleCount) * 3);
+    if (mesh.faceAdjacency.size() != triangleCount || mesh.faceRenderEdges.size() != triangleCount)
+    {
+        return segmentBorderIndices;
+    }
 
     for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
     {
-        const uint32_t offset = triangleIndex * 3;
-        const std::array<uint32_t, 3> triangleIndices = {
-            mesh.indices[static_cast<std::size_t>(offset + 0)],
-            mesh.indices[static_cast<std::size_t>(offset + 1)],
-            mesh.indices[static_cast<std::size_t>(offset + 2)],
-        };
         const uint32_t groupIndex = triangleGroups[static_cast<std::size_t>(triangleIndex)];
 
-        for (std::size_t edgeSlot = 0; edgeSlot < triangleIndices.size(); ++edgeSlot)
+        const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(triangleIndex)];
+        const segmesh::FaceRenderEdges& renderEdges = mesh.faceRenderEdges[static_cast<std::size_t>(triangleIndex)];
+        for (std::size_t edgeSlot = 0; edgeSlot < adjacency.neighbors.size(); ++edgeSlot)
         {
-            const uint32_t index0 = triangleIndices[edgeSlot];
-            const uint32_t index1 = triangleIndices[(edgeSlot + 1) % triangleIndices.size()];
-            const uint64_t key = edgeKey(index0, index1);
-            const auto [it, inserted] = edges.try_emplace(key, SegmentBorderEdge{groupIndex, false});
-            if (!inserted && !it->second.borderRecorded && it->second.groupIndex != groupIndex)
+            const int32_t neighborIndex = adjacency.neighbors[edgeSlot];
+            if (neighborIndex < 0 || triangleIndex >= static_cast<uint32_t>(neighborIndex))
             {
-                segmentBorderIndices.push_back(index0);
-                segmentBorderIndices.push_back(index1);
-                it->second.borderRecorded = true;
+                continue;
+            }
+
+            const uint32_t neighborGroupIndex = triangleGroups[static_cast<std::size_t>(neighborIndex)];
+            if (groupIndex != neighborGroupIndex)
+            {
+                segmentBorderIndices.push_back(renderEdges.indices[edgeSlot][0]);
+                segmentBorderIndices.push_back(renderEdges.indices[edgeSlot][1]);
             }
         }
     }

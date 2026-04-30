@@ -574,9 +574,59 @@ bool selectAutomaticSeedsCoarse(
     std::vector<double> minDistances(faceCount, std::numeric_limits<double>::infinity());
     std::vector<double> distances(faceCount, std::numeric_limits<double>::infinity());
 
-    for (std::size_t componentIndex = 0; componentIndex < components.size(); ++componentIndex)
+    const auto addSeedAndUpdateDistances = [&](uint32_t seedFace) -> bool
+    {
+        if (seedFace >= faceCount || isSeed[static_cast<std::size_t>(seedFace)])
+        {
+            return false;
+        }
+
+        outSeedTriangles.push_back(seedFace);
+        isSeed[static_cast<std::size_t>(seedFace)] = true;
+
+        const int32_t componentId = componentIds[static_cast<std::size_t>(seedFace)];
+        const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            FaceDistanceMetric::GeodesicLength,
+            seedFace,
+            componentId,
+            componentIds,
+            distances
+        );
+        for (const uint32_t faceIndex : componentFaces)
+        {
+            const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
+            minDistances[faceOffset] = std::min(minDistances[faceOffset], distances[faceOffset]);
+        }
+
+        return true;
+    };
+
+    const auto componentAlreadyHasSeed = [&](const std::vector<uint32_t>& componentFaces) -> bool
+    {
+        for (const uint32_t faceIndex : componentFaces)
+        {
+            if (isSeed[static_cast<std::size_t>(faceIndex)])
+            {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    for (std::size_t componentIndex = 0; componentIndex < components.size()
+         && outSeedTriangles.size() < targetSeedCount;
+         ++componentIndex)
     {
         const std::vector<uint32_t>& componentFaces = components[componentIndex];
+        if (componentAlreadyHasSeed(componentFaces))
+        {
+            continue;
+        }
+
         // Paper Sec. 4.1: start from the face nearest the component centroid, then take the farthest face as s1.
         const uint32_t centroidFace = faceClosestToComponentCentroid(mesh, componentFaces);
         runFaceDijkstra(
@@ -590,22 +640,7 @@ bool selectAutomaticSeedsCoarse(
         );
 
         const uint32_t firstSeed = farthestReachableFace(componentFaces, distances);
-        outSeedTriangles.push_back(firstSeed);
-        isSeed[static_cast<std::size_t>(firstSeed)] = true;
-
-        runFaceDijkstra(
-            mesh,
-            segmentationModelType,
-            FaceDistanceMetric::GeodesicLength,
-            firstSeed,
-            static_cast<int32_t>(componentIndex),
-            componentIds,
-            distances
-        );
-        for (const uint32_t faceIndex : componentFaces)
-        {
-            minDistances[static_cast<std::size_t>(faceIndex)] = distances[static_cast<std::size_t>(faceIndex)];
-        }
+        addSeedAndUpdateDistances(firstSeed);
     }
 
     while (outSeedTriangles.size() < targetSeedCount)
@@ -636,26 +671,7 @@ bool selectAutomaticSeedsCoarse(
         }
 
         // Eq. (13): pick the face with maximal distance to its nearest existing seed.
-        outSeedTriangles.push_back(nextSeed);
-        isSeed[static_cast<std::size_t>(nextSeed)] = true;
-
-        const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
-        const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
-        runFaceDijkstra(
-            mesh,
-            segmentationModelType,
-            FaceDistanceMetric::GeodesicLength,
-            nextSeed,
-            componentId,
-            componentIds,
-            distances
-        );
-        for (const uint32_t faceIndex : componentFaces)
-        {
-            // Keep min_i D(f_k, s_i) up to date for the next Eq. (13) selection step.
-            const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
-            minDistances[faceOffset] = std::min(minDistances[faceOffset], distances[faceOffset]);
-        }
+        addSeedAndUpdateDistances(nextSeed);
     }
 
     if (outSeedTriangles.empty())
