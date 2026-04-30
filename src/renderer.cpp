@@ -11,6 +11,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -123,18 +124,95 @@ void destroyIndexBuffer(bgfx::IndexBufferHandle& handle)
 
 segmesh::Float3 colorForGroup(uint32_t groupIndex)
 {
-    static constexpr std::array<segmesh::Float3, 8> kGroupPalette = {{
+    static constexpr std::array<segmesh::Float3, 32> kGroupPalette = {{
         {0.90f, 0.32f, 0.32f},
-        {0.95f, 0.60f, 0.25f},
-        {0.94f, 0.84f, 0.28f},
+        {0.24f, 0.62f, 0.90f},
         {0.34f, 0.76f, 0.42f},
-        {0.24f, 0.72f, 0.78f},
-        {0.29f, 0.48f, 0.88f},
+        {0.94f, 0.72f, 0.24f},
         {0.62f, 0.42f, 0.86f},
+        {0.24f, 0.72f, 0.78f},
         {0.87f, 0.42f, 0.68f},
+        {0.54f, 0.70f, 0.25f},
+        {0.95f, 0.48f, 0.22f},
+        {0.42f, 0.50f, 0.92f},
+        {0.28f, 0.80f, 0.62f},
+        {0.82f, 0.36f, 0.88f},
+        {0.74f, 0.78f, 0.26f},
+        {0.20f, 0.54f, 0.70f},
+        {0.96f, 0.58f, 0.55f},
+        {0.42f, 0.84f, 0.30f},
+        {0.76f, 0.46f, 0.28f},
+        {0.52f, 0.38f, 0.68f},
+        {0.28f, 0.68f, 0.50f},
+        {0.92f, 0.82f, 0.40f},
+        {0.30f, 0.42f, 0.74f},
+        {0.82f, 0.30f, 0.46f},
+        {0.40f, 0.76f, 0.88f},
+        {0.64f, 0.58f, 0.24f},
+        {0.98f, 0.38f, 0.28f},
+        {0.48f, 0.64f, 0.34f},
+        {0.72f, 0.36f, 0.64f},
+        {0.26f, 0.76f, 0.70f},
+        {0.70f, 0.54f, 0.88f},
+        {0.88f, 0.64f, 0.34f},
+        {0.34f, 0.58f, 0.40f},
+        {0.78f, 0.28f, 0.72f},
     }};
 
     return kGroupPalette[static_cast<std::size_t>(groupIndex % kGroupPalette.size())];
+}
+
+struct SegmentBorderEdge
+{
+    uint32_t groupIndex = 0;
+    bool borderRecorded = false;
+};
+
+uint64_t edgeKey(uint32_t index0, uint32_t index1)
+{
+    const uint32_t low = index0 < index1 ? index0 : index1;
+    const uint32_t high = index0 < index1 ? index1 : index0;
+    return (static_cast<uint64_t>(low) << 32) | static_cast<uint64_t>(high);
+}
+
+std::vector<uint32_t> buildSegmentBorderIndices(
+    const segmesh::CpuMesh& mesh,
+    const std::vector<uint32_t>& triangleGroups
+)
+{
+    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    std::vector<uint32_t> segmentBorderIndices;
+    segmentBorderIndices.reserve(triangleCount * 2);
+
+    std::unordered_map<uint64_t, SegmentBorderEdge> edges;
+    edges.reserve(static_cast<std::size_t>(triangleCount) * 3);
+
+    for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+    {
+        const uint32_t offset = triangleIndex * 3;
+        const std::array<uint32_t, 3> triangleIndices = {
+            mesh.indices[static_cast<std::size_t>(offset + 0)],
+            mesh.indices[static_cast<std::size_t>(offset + 1)],
+            mesh.indices[static_cast<std::size_t>(offset + 2)],
+        };
+        const uint32_t groupIndex = triangleGroups[static_cast<std::size_t>(triangleIndex)];
+
+        for (std::size_t edgeSlot = 0; edgeSlot < triangleIndices.size(); ++edgeSlot)
+        {
+            const uint32_t index0 = triangleIndices[edgeSlot];
+            const uint32_t index1 = triangleIndices[(edgeSlot + 1) % triangleIndices.size()];
+            const uint64_t key = edgeKey(index0, index1);
+            const auto [it, inserted] = edges.try_emplace(key, SegmentBorderEdge{groupIndex, false});
+            if (!inserted && !it->second.borderRecorded && it->second.groupIndex != groupIndex)
+            {
+                segmentBorderIndices.push_back(index0);
+                segmentBorderIndices.push_back(index1);
+                it->second.borderRecorded = true;
+            }
+        }
+    }
+
+    return segmentBorderIndices;
 }
 }
 
@@ -432,7 +510,33 @@ bool Renderer::setTriangleGroups(
         newTriangleGroupDraws.push_back(groupDraw);
     }
 
+    const std::vector<uint32_t> segmentBorderIndices = buildSegmentBorderIndices(mesh, triangleGroups);
+
+    bgfx::IndexBufferHandle newSegmentBorderIbh = BGFX_INVALID_HANDLE;
+    uint32_t newSegmentBorderIndexCount = 0;
+    if (!segmentBorderIndices.empty())
+    {
+        const bgfx::Memory* imem = bgfx::copy(
+            segmentBorderIndices.data(),
+            static_cast<uint32_t>(segmentBorderIndices.size() * sizeof(uint32_t))
+        );
+        newSegmentBorderIbh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+        if (!bgfx::isValid(newSegmentBorderIbh))
+        {
+            error = "Failed to create the segment border index buffer.";
+            for (TriangleGroupDraw& createdGroupDraw : newTriangleGroupDraws)
+            {
+                destroyIndexBuffer(createdGroupDraw.ibh);
+            }
+            return false;
+        }
+
+        newSegmentBorderIndexCount = static_cast<uint32_t>(segmentBorderIndices.size());
+    }
+
     clearTriangleGroups();
+    segmentBorderIbh_ = newSegmentBorderIbh;
+    segmentBorderIndexCount_ = newSegmentBorderIndexCount;
     triangleGroupDraws_ = std::move(newTriangleGroupDraws);
     return true;
 }
@@ -445,6 +549,9 @@ void Renderer::clearSeedTriangle()
 
 void Renderer::clearTriangleGroups()
 {
+    destroyIndexBuffer(segmentBorderIbh_);
+    segmentBorderIndexCount_ = 0;
+
     for (TriangleGroupDraw& groupDraw : triangleGroupDraws_)
     {
         destroyIndexBuffer(groupDraw.ibh);
@@ -507,8 +614,9 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         | BGFX_STATE_DEPTH_TEST_LESS
         | BGFX_STATE_MSAA;
 
-    // Reuse the same shaded draw setup for the base mesh, groups, and seed ovelays
-    const auto submitMeshPass = [&](bgfx::IndexBufferHandle ibh, uint32_t indexCount, const float color[4], uint64_t drawState)
+    // Reuse the same shaded draw setup for the base mesh, groups, outlines, and seed overlays.
+    const auto submitMeshPass =
+        [&](bgfx::IndexBufferHandle ibh, uint32_t indexCount, const float color[4], const float material[4], uint64_t drawState)
     {
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, gpuMesh_.vbh);
@@ -517,22 +625,40 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         bgfx::setUniform(uLightDir_, lightDirUniform);
         bgfx::setUniform(uLightColor_, lightColorUniform);
         bgfx::setUniform(uCameraPos_, cameraPosUniform);
-        bgfx::setUniform(uMaterial_, materialUniform);
+        bgfx::setUniform(uMaterial_, material);
         bgfx::setState(drawState);
         bgfx::submit(0, meshProgram_);
     };
 
     if (triangleGroupDraws_.empty())
     {
-        submitMeshPass(gpuMesh_.ibh, gpuMesh_.indexCount, baseColorUniform, state);
+        submitMeshPass(gpuMesh_.ibh, gpuMesh_.indexCount, baseColorUniform, materialUniform, state);
     }
     else
     {
         for (const TriangleGroupDraw& groupDraw : triangleGroupDraws_)
         {
             const float groupColorUniform[4] = {groupDraw.color.x, groupDraw.color.y, groupDraw.color.z, 1.0f};
-            submitMeshPass(groupDraw.ibh, groupDraw.indexCount, groupColorUniform, state);
+            submitMeshPass(groupDraw.ibh, groupDraw.indexCount, groupColorUniform, materialUniform, state);
         }
+    }
+
+    if (uiState.showSegmentBorders && bgfx::isValid(segmentBorderIbh_) && segmentBorderIndexCount_ > 0)
+    {
+        const float borderColorUniform[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const float borderMaterialUniform[4] = {1.0f, 0.0f, 1.0f, 0.0f};
+        const uint64_t borderState = BGFX_STATE_WRITE_RGB
+            | BGFX_STATE_WRITE_A
+            | BGFX_STATE_DEPTH_TEST_LEQUAL
+            | BGFX_STATE_PT_LINES
+            | BGFX_STATE_MSAA;
+        submitMeshPass(
+            segmentBorderIbh_,
+            segmentBorderIndexCount_,
+            borderColorUniform,
+            borderMaterialUniform,
+            borderState
+        );
     }
 
     if (bgfx::isValid(seedTriangleIbh_))
@@ -543,7 +669,13 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
             | BGFX_STATE_WRITE_A
             | BGFX_STATE_DEPTH_TEST_LEQUAL
             | BGFX_STATE_MSAA;
-        submitMeshPass(seedTriangleIbh_, static_cast<uint32_t>(seedTriangleIndices_.size()), seedColorUniform, seedState);
+        submitMeshPass(
+            seedTriangleIbh_,
+            static_cast<uint32_t>(seedTriangleIndices_.size()),
+            seedColorUniform,
+            materialUniform,
+            seedState
+        );
     }
 }
 

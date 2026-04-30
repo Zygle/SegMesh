@@ -70,6 +70,12 @@ struct FaceGraphEdgeInfo
     double difference = 0.0;
 };
 
+enum class FaceDistanceMetric
+{
+    GeodesicLength,
+    FeatureWeightedGeodesic,
+};
+
 double squaredDistance(const segmesh::Float3& a, const Eigen::Vector3d& b)
 {
     const double dx = static_cast<double>(a.x) - b.x();
@@ -91,15 +97,25 @@ double automaticSeedEdgeCost(
     segmesh::SegmentationModelType segmentationModelType,
     uint32_t faceIndex,
     std::size_t edgeSlot,
-    uint32_t neighborIndex
+    uint32_t neighborIndex,
+    FaceDistanceMetric metric
 )
 {
+    if (metric == FaceDistanceMetric::GeodesicLength)
+    {
+        const double geodesicStep = centroidDistance(
+            mesh.faceCentroids[static_cast<std::size_t>(faceIndex)],
+            mesh.faceCentroids[static_cast<std::size_t>(neighborIndex)]
+        );
+        return std::max(geodesicStep, 1.0e-12);
+    }
+
     const double difference = edgeDifferenceForMode(mesh, segmentationModelType, faceIndex, edgeSlot, neighborIndex);
     const double geodesicStep = centroidDistance(
         mesh.faceCentroids[static_cast<std::size_t>(faceIndex)],
         mesh.faceCentroids[static_cast<std::size_t>(neighborIndex)]
     );
-    return std::max(geodesicStep * (1.0 + difference), 1.0e-6);
+    return std::max(geodesicStep * (1.0 + std::max(difference, 0.0)), 1.0e-12);
 }
 
 void collectConnectedFaceComponents(
@@ -156,6 +172,7 @@ void collectConnectedFaceComponents(
 void runFaceDijkstra(
     const segmesh::CpuMesh& mesh,
     segmesh::SegmentationModelType segmentationModelType,
+    FaceDistanceMetric metric,
     uint32_t sourceFace,
     int32_t componentId,
     const std::vector<int32_t>& componentIds,
@@ -192,8 +209,8 @@ void runFaceDijkstra(
             }
 
             const uint32_t neighborFace = static_cast<uint32_t>(neighborIndex);
-            const double candidateDistance =
-                currentDistance + automaticSeedEdgeCost(mesh, segmentationModelType, faceIndex, edgeSlot, neighborFace);
+            const double candidateDistance = currentDistance
+                + automaticSeedEdgeCost(mesh, segmentationModelType, faceIndex, edgeSlot, neighborFace, metric);
             if (candidateDistance >= outDistances[static_cast<std::size_t>(neighborFace)])
             {
                 continue;
@@ -565,6 +582,7 @@ bool selectAutomaticSeedsCoarse(
         runFaceDijkstra(
             mesh,
             segmentationModelType,
+            FaceDistanceMetric::GeodesicLength,
             centroidFace,
             static_cast<int32_t>(componentIndex),
             componentIds,
@@ -578,6 +596,7 @@ bool selectAutomaticSeedsCoarse(
         runFaceDijkstra(
             mesh,
             segmentationModelType,
+            FaceDistanceMetric::GeodesicLength,
             firstSeed,
             static_cast<int32_t>(componentIndex),
             componentIds,
@@ -622,7 +641,15 @@ bool selectAutomaticSeedsCoarse(
 
         const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
         const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
-        runFaceDijkstra(mesh, segmentationModelType, nextSeed, componentId, componentIds, distances);
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            FaceDistanceMetric::GeodesicLength,
+            nextSeed,
+            componentId,
+            componentIds,
+            distances
+        );
         for (const uint32_t faceIndex : componentFaces)
         {
             // Keep min_i D(f_k, s_i) up to date for the next Eq. (13) selection step.
@@ -702,6 +729,7 @@ bool selectAutomaticSeedsFine(
         runFaceDijkstra(
             mesh,
             segmentationModelType,
+            FaceDistanceMetric::FeatureWeightedGeodesic,
             initialSeed,
             static_cast<int32_t>(componentIndex),
             componentIds,
@@ -750,7 +778,15 @@ bool selectAutomaticSeedsFine(
 
         const int32_t componentId = componentIds[static_cast<std::size_t>(nextSeed)];
         const std::vector<uint32_t>& componentFaces = components[static_cast<std::size_t>(componentId)];
-        runFaceDijkstra(mesh, segmentationModelType, nextSeed, componentId, componentIds, distances);
+        runFaceDijkstra(
+            mesh,
+            segmentationModelType,
+            FaceDistanceMetric::FeatureWeightedGeodesic,
+            nextSeed,
+            componentId,
+            componentIds,
+            distances
+        );
         for (const uint32_t faceIndex : componentFaces)
         {
             const std::size_t faceOffset = static_cast<std::size_t>(faceIndex);
@@ -916,11 +952,11 @@ bool mergeSegmentsByBoundaryCost(
                 const double unionDifference =
                     boundaryDifference[static_cast<std::size_t>(segmentA)]
                     + boundaryDifference[static_cast<std::size_t>(segmentB)]
-                    - 2.0 * commonDifference[index];
+                    - commonDifference[index];
                 const double unionLength =
                     boundaryLength[static_cast<std::size_t>(segmentA)]
                     + boundaryLength[static_cast<std::size_t>(segmentB)]
-                    - 2.0 * commonLength[index];
+                    - commonLength[index];
                 if (unionLength <= 1.0e-12)
                 {
                     continue;

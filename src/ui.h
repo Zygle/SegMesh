@@ -32,6 +32,7 @@ struct RendererUiState
     float shininess = 64.0f;
 
     bool showSegmentation = false;
+    bool showSegmentBorders = true;
     bool automaticSegmentation = false;
     SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;
     AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;

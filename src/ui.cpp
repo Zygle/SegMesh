@@ -48,6 +48,7 @@ RendererUiActions drawRendererPanel(
     ImGui::Text("Triangles: %u", triangleCount);
     ImGui::Separator();
     ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
+    ImGui::Checkbox("Black segment borders", &uiState.showSegmentBorders);
     int segmentationModel = static_cast<int>(uiState.segmentationModelType);
     const char* segmentationModelLabels[] = {"Graphical", "Engineering"};
     ImGui::TextUnformatted("Segmentation model");

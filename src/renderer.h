@@ -58,6 +58,8 @@ private:
     bgfx::UniformHandle uCameraPos_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uMaterial_ = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle seedTriangleIbh_ = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle segmentBorderIbh_ = BGFX_INVALID_HANDLE;
+    uint32_t segmentBorderIndexCount_ = 0;
     std::vector<uint32_t> seedTriangleIndices_;
     std::vector<TriangleGroupDraw> triangleGroupDraws_;
 };
