@@ -19,6 +19,16 @@ RendererUiActions drawRendererPanel(
     RendererUiActions actions{};
     actions.pendingModelIndex = selectedModelIndex;
 
+    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    const float panelWidth = 315.0f;
+    const float topMargin = 26.0f;
+    const float sideMargin = 10.0f;
+    const float rendererHeight = std::max(420.0f, displaySize.y - 74.0f);
+    const float segmentationHeight = std::max(360.0f, displaySize.y - 118.0f);
+    const float segmentationX = std::max(sideMargin, displaySize.x - panelWidth - 18.0f);
+
+    ImGui::SetNextWindowPos(ImVec2(sideMargin, topMargin), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, rendererHeight), ImGuiCond_Once);
     ImGui::Begin("Renderer");
 
     const std::string activeModelLabel = objPath.filename().string();
@@ -46,7 +56,31 @@ RendererUiActions drawRendererPanel(
     ImGui::Text("Available models: %u", static_cast<uint32_t>(modelPaths.size()));
     ImGui::Text("Vertices: %u", vertexCount);
     ImGui::Text("Triangles: %u", triangleCount);
+    if (!uiState.modelLoadError.empty())
+    {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Status: %s", uiState.modelLoadError.c_str());
+    }
     ImGui::Separator();
+    ImGui::Checkbox("Auto rotate", &uiState.autoRotate);
+    ImGui::SliderFloat("Rotate speed", &uiState.rotateSpeed, 0.0f, 3.0f);
+    ImGui::SliderFloat("Camera distance", &uiState.cameraDistance, 1.0f, 10.0f);
+    ImGui::SliderFloat("Camera yaw", &uiState.cameraYaw, -3.14f, 3.14f);
+    ImGui::SliderFloat("Camera pitch", &uiState.cameraPitch, -1.2f, 1.2f);
+    ImGui::Separator();
+    ImGui::ColorEdit3("Base color", uiState.baseColor);
+    ImGui::SliderFloat3("Light direction", uiState.lightDirection, -1.0f, 1.0f);
+    ImGui::ColorEdit3("Light color", uiState.lightColor);
+    ImGui::SliderFloat("Light intensity", &uiState.lightIntensity, 0.0f, 4.0f);
+    ImGui::SliderFloat("Ambient", &uiState.ambientStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("Specular", &uiState.specularStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("Shininess", &uiState.shininess, 8.0f, 256.0f);
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(segmentationX, topMargin), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, segmentationHeight), ImGuiCond_Once);
+    ImGui::Begin("Segmentation");
+
     ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
     ImGui::Checkbox("Black segment borders", &uiState.showSegmentBorders);
     int segmentationModel = static_cast<int>(uiState.segmentationModelType);
@@ -54,6 +88,7 @@ RendererUiActions drawRendererPanel(
     ImGui::TextUnformatted("Segmentation model");
     ImGui::Combo("##SegmentationModel", &segmentationModel, segmentationModelLabels, IM_ARRAYSIZE(segmentationModelLabels));
     uiState.segmentationModelType = static_cast<SegmentationModelType>(segmentationModel);
+    ImGui::Separator();
     ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
     if (uiState.automaticSegmentation)
     {
@@ -115,25 +150,6 @@ RendererUiActions drawRendererPanel(
     {
         ImGui::TextUnformatted("Manual seed placement is disabled while automatic mode is enabled.");
     }
-    if (!uiState.modelLoadError.empty())
-    {
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Model load error: %s", uiState.modelLoadError.c_str());
-    }
-    ImGui::Separator();
-    ImGui::Checkbox("Auto rotate", &uiState.autoRotate);
-    ImGui::SliderFloat("Rotate speed", &uiState.rotateSpeed, 0.0f, 3.0f);
-    ImGui::SliderFloat("Camera distance", &uiState.cameraDistance, 1.0f, 10.0f);
-    ImGui::SliderFloat("Camera yaw", &uiState.cameraYaw, -3.14f, 3.14f);
-    ImGui::SliderFloat("Camera pitch", &uiState.cameraPitch, -1.2f, 1.2f);
-    ImGui::Separator();
-    ImGui::ColorEdit3("Base color", uiState.baseColor);
-    ImGui::SliderFloat3("Light direction", uiState.lightDirection, -1.0f, 1.0f);
-    ImGui::ColorEdit3("Light color", uiState.lightColor);
-    ImGui::SliderFloat("Light intensity", &uiState.lightIntensity, 0.0f, 4.0f);
-    ImGui::SliderFloat("Ambient", &uiState.ambientStrength, 0.0f, 1.0f);
-    ImGui::SliderFloat("Specular", &uiState.specularStrength, 0.0f, 1.0f);
-    ImGui::SliderFloat("Shininess", &uiState.shininess, 8.0f, 256.0f);
     ImGui::End();
 
     return actions;
