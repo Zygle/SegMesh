@@ -37,6 +37,8 @@ struct RendererUiState
     SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;
     AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;
     int automaticSeedCount = 8;
+    bool stepAutomaticSegmentation = false;
+    int automaticStepSeedCount = 1;
     bool mergeFineSegments = true;
     int mergeTargetSegmentCount = 30;
     float mergeCostThreshold = 0.5f;
@@ -51,6 +53,9 @@ struct RendererUiActions
     int pendingModelIndex = 0;
     bool requestRandomSeed = false;
     bool requestClearSeed = false;
+    bool requestAutomaticStep = false;
+    bool requestAutomaticStepReset = false;
+    bool requestAutomaticStepFinish = false;
 };
 
 RendererUiActions drawRendererPanel(

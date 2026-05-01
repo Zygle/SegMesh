@@ -10,9 +10,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <random>
 #include <string>
@@ -390,11 +392,10 @@ bool syncDisplayedSeedTriangles(
     return true;
 }
 
-bool rebuildAutomaticSeeds(
-    segmesh::Renderer& renderer,
+bool buildAutomaticSeedPlan(
     const segmesh::CpuMesh& mesh,
     const segmesh::RendererUiState& uiState,
-    std::vector<uint32_t>& automaticSeedTriangles,
+    std::vector<uint32_t>& automaticSeedPlanTriangles,
     std::string& error
 )
 {
@@ -409,7 +410,7 @@ bool rebuildAutomaticSeeds(
             mesh,
             uiState.segmentationModelType,
             targetSeedCount,
-            automaticSeedTriangles,
+            automaticSeedPlanTriangles,
             error
         );
     }
@@ -419,18 +420,67 @@ bool rebuildAutomaticSeeds(
             mesh,
             uiState.segmentationModelType,
             targetSeedCount,
-            automaticSeedTriangles,
+            automaticSeedPlanTriangles,
             error
         );
     }
 
     if (!success)
     {
+        automaticSeedPlanTriangles.clear();
+        return false;
+    }
+
+    return true;
+}
+
+uint32_t automaticSeedPrefixCount(
+    segmesh::RendererUiState& uiState,
+    const std::vector<uint32_t>& automaticSeedPlanTriangles
+)
+{
+    const uint32_t planSeedCount = static_cast<uint32_t>(automaticSeedPlanTriangles.size());
+    if (planSeedCount == 0)
+    {
+        uiState.automaticStepSeedCount = 0;
+        return 0;
+    }
+
+    if (!uiState.stepAutomaticSegmentation)
+    {
+        uiState.automaticStepSeedCount = static_cast<int>(planSeedCount);
+        return planSeedCount;
+    }
+
+    const uint32_t requestedSeedCount = static_cast<uint32_t>(std::max(uiState.automaticStepSeedCount, 1));
+    const uint32_t activeSeedCount = std::min(requestedSeedCount, planSeedCount);
+    uiState.automaticStepSeedCount = static_cast<int>(activeSeedCount);
+    return activeSeedCount;
+}
+
+bool syncAutomaticSeedPrefix(
+    segmesh::Renderer& renderer,
+    const segmesh::CpuMesh& mesh,
+    segmesh::RendererUiState& uiState,
+    const std::vector<uint32_t>& automaticSeedPlanTriangles,
+    std::vector<uint32_t>& automaticSeedTriangles,
+    std::string& error
+)
+{
+    const uint32_t activeSeedCount = automaticSeedPrefixCount(uiState, automaticSeedPlanTriangles);
+    if (activeSeedCount == 0)
+    {
         automaticSeedTriangles.clear();
         renderer.clearSeedTriangle();
         renderer.clearTriangleGroups();
+        error = "Automatic segmentation has no generated seed plan.";
         return false;
     }
+
+    automaticSeedTriangles.assign(
+        automaticSeedPlanTriangles.begin(),
+        automaticSeedPlanTriangles.begin() + static_cast<std::ptrdiff_t>(activeSeedCount)
+    );
 
     if (!syncDisplayedSeedTriangles(renderer, mesh, automaticSeedTriangles, error))
     {
@@ -441,6 +491,33 @@ bool rebuildAutomaticSeeds(
     }
 
     return true;
+}
+
+bool rebuildAutomaticSeeds(
+    segmesh::Renderer& renderer,
+    const segmesh::CpuMesh& mesh,
+    segmesh::RendererUiState& uiState,
+    std::vector<uint32_t>& automaticSeedPlanTriangles,
+    std::vector<uint32_t>& automaticSeedTriangles,
+    std::string& error
+)
+{
+    if (!buildAutomaticSeedPlan(mesh, uiState, automaticSeedPlanTriangles, error))
+    {
+        automaticSeedTriangles.clear();
+        renderer.clearSeedTriangle();
+        renderer.clearTriangleGroups();
+        return false;
+    }
+
+    return syncAutomaticSeedPrefix(
+        renderer,
+        mesh,
+        uiState,
+        automaticSeedPlanTriangles,
+        automaticSeedTriangles,
+        error
+    );
 }
 
 bool refreshSegmentationPreview(
@@ -469,8 +546,13 @@ bool refreshSegmentationPreview(
         return false;
     }
 
+    const bool automaticStepInProgress =
+        uiState.automaticSegmentation
+        && uiState.stepAutomaticSegmentation
+        && static_cast<int>(seedTriangles.size()) < std::max(uiState.automaticSeedCount, 1);
+
     if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
-        && uiState.mergeFineSegments)
+        && uiState.mergeFineSegments && !automaticStepInProgress)
     {
         const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.mergeTargetSegmentCount, 1));
         if (!segmesh::mergeSegmentsByBoundaryCost(
@@ -487,7 +569,7 @@ bool refreshSegmentationPreview(
     }
 
     if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
-        && uiState.cleanupSmallFineSegments)
+        && uiState.cleanupSmallFineSegments && !automaticStepInProgress)
     {
         const uint32_t minTriangleCount = static_cast<uint32_t>(std::max(uiState.minFineSegmentTriangles, 2));
         if (!segmesh::mergeSmallSegmentsByTriangleCount(
@@ -664,6 +746,7 @@ int main(int argc, char** argv)
 
     float modelRotation = 0.0f;
     std::vector<uint32_t> manualSeedTriangles;
+    std::vector<uint32_t> automaticSeedPlanTriangles;
     std::vector<uint32_t> automaticSeedTriangles;
     segmesh::RendererUiState uiState{};
     std::mt19937 randomEngine(std::random_device{}());
@@ -741,6 +824,8 @@ int main(int argc, char** argv)
         const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
             uiState.automaticSegmentationMode;
         const int previousAutomaticSeedCount = uiState.automaticSeedCount;
+        const bool previousStepAutomaticSegmentation = uiState.stepAutomaticSegmentation;
+        const int previousAutomaticStepSeedCount = uiState.automaticStepSeedCount;
         const bool previousMergeFineSegments = uiState.mergeFineSegments;
         const int previousMergeTargetSegmentCount = uiState.mergeTargetSegmentCount;
         const float previousMergeCostThreshold = uiState.mergeCostThreshold;
@@ -758,6 +843,30 @@ int main(int argc, char** argv)
             renderer.rendererName(),
             uiState
         );
+        if (uiState.automaticSegmentation && uiState.stepAutomaticSegmentation)
+        {
+            if (!previousStepAutomaticSegmentation)
+            {
+                uiState.automaticStepSeedCount = 1;
+            }
+            else if (uiActions.requestAutomaticStepReset)
+            {
+                uiState.automaticStepSeedCount = 1;
+            }
+            else if (uiActions.requestAutomaticStepFinish)
+            {
+                uiState.automaticStepSeedCount = automaticSeedPlanTriangles.empty()
+                    ? std::numeric_limits<int>::max()
+                    : static_cast<int>(automaticSeedPlanTriangles.size());
+            }
+            else if (uiActions.requestAutomaticStep)
+            {
+                const int currentStepSeedCount = std::max(uiState.automaticStepSeedCount, 1);
+                uiState.automaticStepSeedCount = currentStepSeedCount < std::numeric_limits<int>::max()
+                    ? currentStepSeedCount + 1
+                    : currentStepSeedCount;
+            }
+        }
         if (uiState.automaticSegmentation)
         {
             uiState.showSegmentation = true;
@@ -771,6 +880,9 @@ int main(int argc, char** argv)
         const bool segmentationModelChanged =
             uiState.segmentationModelType != previousSegmentationModelType;
         const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
+        const bool automaticStepSettingsChanged =
+            uiState.stepAutomaticSegmentation != previousStepAutomaticSegmentation
+            || uiState.automaticStepSeedCount != previousAutomaticStepSeedCount;
         const bool mergeSettingsChanged =
             uiState.mergeFineSegments != previousMergeFineSegments
             || uiState.mergeTargetSegmentCount != previousMergeTargetSegmentCount
@@ -816,6 +928,7 @@ int main(int argc, char** argv)
                 selectedModelIndex = pendingModelIndex;
                 modelRotation = 0.0f;
                 manualSeedTriangles.clear();
+                automaticSeedPlanTriangles.clear();
                 automaticSeedTriangles.clear();
                 meshReloaded = true;
                 uiState.modelLoadError.clear();
@@ -833,7 +946,14 @@ int main(int argc, char** argv)
                 || automaticSeedCountChanged))
         {
             std::string autoSeedError;
-            if (rebuildAutomaticSeeds(renderer, mesh, uiState, automaticSeedTriangles, autoSeedError))
+            if (rebuildAutomaticSeeds(
+                    renderer,
+                    mesh,
+                    uiState,
+                    automaticSeedPlanTriangles,
+                    automaticSeedTriangles,
+                    autoSeedError
+                ))
             {
                 activeSeedsChanged = true;
                 uiState.modelLoadError.clear();
@@ -841,6 +961,26 @@ int main(int argc, char** argv)
             else
             {
                 uiState.modelLoadError = autoSeedError;
+            }
+        }
+        else if (uiState.automaticSegmentation && automaticStepSettingsChanged)
+        {
+            std::string stepError;
+            if (syncAutomaticSeedPrefix(
+                    renderer,
+                    mesh,
+                    uiState,
+                    automaticSeedPlanTriangles,
+                    automaticSeedTriangles,
+                    stepError
+                ))
+            {
+                activeSeedsChanged = true;
+                uiState.modelLoadError.clear();
+            }
+            else
+            {
+                uiState.modelLoadError = stepError;
             }
         }
         else if (automaticSegmentationChanged)

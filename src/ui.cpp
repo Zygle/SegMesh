@@ -103,6 +103,26 @@ RendererUiActions drawRendererPanel(
             uiState.automaticSegmentationMode == AutomaticSegmentationMode::Fine ? 200 : 64;
         uiState.automaticSeedCount = std::clamp(uiState.automaticSeedCount, minSeedCount, maxSeedCount);
         ImGui::SliderInt("Auto seed target", &uiState.automaticSeedCount, minSeedCount, maxSeedCount);
+        ImGui::Checkbox("Step-by-step", &uiState.stepAutomaticSegmentation);
+        if (uiState.stepAutomaticSegmentation)
+        {
+            uiState.automaticStepSeedCount = std::max(uiState.automaticStepSeedCount, 1);
+            if (ImGui::Button("Next step"))
+            {
+                actions.requestAutomaticStep = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset steps"))
+            {
+                actions.requestAutomaticStepReset = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Finish"))
+            {
+                actions.requestAutomaticStepFinish = true;
+            }
+            ImGui::Text("Active auto seeds: %d", uiState.automaticStepSeedCount);
+        }
 
         if (uiState.automaticSegmentationMode == AutomaticSegmentationMode::Coarse)
         {
