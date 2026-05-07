@@ -968,11 +968,11 @@ bool mergeSegmentsByBoundaryCost(
                 const double unionDifference =
                     boundaryDifference[static_cast<std::size_t>(segmentA)]
                     + boundaryDifference[static_cast<std::size_t>(segmentB)]
-                    - commonDifference[index];
+                    - 2.0 * commonDifference[index];
                 const double unionLength =
                     boundaryLength[static_cast<std::size_t>(segmentA)]
                     + boundaryLength[static_cast<std::size_t>(segmentB)]
-                    - commonLength[index];
+                    - 2.0 * commonLength[index];
                 if (unionLength <= 1.0e-12)
                 {
                     continue;
