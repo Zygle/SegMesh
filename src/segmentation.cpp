@@ -16,6 +16,8 @@
 
 namespace
 {
+constexpr double kCoplanarNormalDifferenceEpsilon = 1.0e-8;
+
 double dot(const segmesh::Float3& a, const segmesh::Float3& b)
 {
     return static_cast<double>(a.x) * static_cast<double>(b.x)
@@ -48,8 +50,14 @@ double edgeDifferenceForMode(
         return rawDifference / std::max(static_cast<double>(mesh.averageGraphicalDifference), 1.0e-12);
     }
 
-    const double normalDifference = (1.0 - normalDot)
+    const double rawNormalDifference = 1.0 - normalDot;
+    const double normalDifference = rawNormalDifference
         / std::max(static_cast<double>(mesh.averageEngineeringNormalDifference), 1.0e-12);
+    if (rawNormalDifference <= kCoplanarNormalDifferenceEpsilon)
+    {
+        return normalDifference;
+    }
+
     const double gaussianDifference = std::abs(
         static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(faceIndex)])
             - static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(neighborIndex)])
