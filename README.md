@@ -138,3 +138,8 @@ Run with the first OBJ found under `assets/`:
 ```bash
 ./build/segmesh
 ```
+
+
+
+considering:
+https://github.com/zeux/meshoptimizer
