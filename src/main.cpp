@@ -371,6 +371,36 @@ const std::vector<uint32_t>& activeSeedTriangles(
     return automaticSegmentation ? automaticSeedTriangles : manualSeedTriangles;
 }
 
+struct RandomWalkLabelCache
+{
+    bool valid = false;
+    uint64_t meshGeneration = 0;
+    segmesh::SegmentationModelType segmentationModelType = segmesh::SegmentationModelType::Graphical;
+    std::vector<uint32_t> seedTriangles;
+    std::vector<uint32_t> unmergedTriangleLabels;
+
+    void invalidate()
+    {
+        valid = false;
+        seedTriangles.clear();
+        unmergedTriangleLabels.clear();
+    }
+
+    bool matches(
+        uint64_t requestedMeshGeneration,
+        segmesh::SegmentationModelType requestedSegmentationModelType,
+        const std::vector<uint32_t>& requestedSeedTriangles,
+        uint32_t faceCount
+    ) const
+    {
+        return valid
+            && meshGeneration == requestedMeshGeneration
+            && segmentationModelType == requestedSegmentationModelType
+            && seedTriangles == requestedSeedTriangles
+            && unmergedTriangleLabels.size() == faceCount;
+    }
+};
+
 bool syncDisplayedSeedTriangles(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -525,6 +555,8 @@ bool refreshSegmentationPreview(
     const segmesh::CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
     const segmesh::RendererUiState& uiState,
+    uint64_t meshGeneration,
+    RandomWalkLabelCache& randomWalkLabelCache,
     std::string& error
 )
 {
@@ -535,15 +567,30 @@ bool refreshSegmentationPreview(
     }
 
     std::vector<uint32_t> triangleLabels;
-    if (!segmesh::segmentMeshRandomWalk(
-            mesh,
-            uiState.segmentationModelType,
-            seedTriangles,
-            triangleLabels,
-            error
-        ))
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (randomWalkLabelCache.matches(meshGeneration, uiState.segmentationModelType, seedTriangles, faceCount))
     {
-        return false;
+        triangleLabels = randomWalkLabelCache.unmergedTriangleLabels;
+    }
+    else
+    {
+        if (!segmesh::segmentMeshRandomWalk(
+                mesh,
+                uiState.segmentationModelType,
+                seedTriangles,
+                triangleLabels,
+                error
+            ))
+        {
+            randomWalkLabelCache.invalidate();
+            return false;
+        }
+
+        randomWalkLabelCache.valid = true;
+        randomWalkLabelCache.meshGeneration = meshGeneration;
+        randomWalkLabelCache.segmentationModelType = uiState.segmentationModelType;
+        randomWalkLabelCache.seedTriangles = seedTriangles;
+        randomWalkLabelCache.unmergedTriangleLabels = triangleLabels;
     }
 
     const bool automaticStepInProgress =
@@ -605,6 +652,8 @@ bool addSeedTriangle(
     uint32_t triangleIndex,
     std::vector<uint32_t>& selectedSeedTriangles,
     const segmesh::RendererUiState& uiState,
+    uint64_t meshGeneration,
+    RandomWalkLabelCache& randomWalkLabelCache,
     std::string& error
 )
 {
@@ -622,7 +671,15 @@ bool addSeedTriangle(
     }
 
     selectedSeedTriangles.push_back(triangleIndex);
-    return refreshSegmentationPreview(renderer, mesh, selectedSeedTriangles, uiState, error);
+    return refreshSegmentationPreview(
+        renderer,
+        mesh,
+        selectedSeedTriangles,
+        uiState,
+        meshGeneration,
+        randomWalkLabelCache,
+        error
+    );
 }
 }
 
@@ -748,6 +805,8 @@ int main(int argc, char** argv)
     std::vector<uint32_t> manualSeedTriangles;
     std::vector<uint32_t> automaticSeedPlanTriangles;
     std::vector<uint32_t> automaticSeedTriangles;
+    uint64_t meshGeneration = 1;
+    RandomWalkLabelCache randomWalkLabelCache;
     segmesh::RendererUiState uiState{};
     std::mt19937 randomEngine(std::random_device{}());
     double previousMouseX = 0.0;
@@ -930,6 +989,8 @@ int main(int argc, char** argv)
                 manualSeedTriangles.clear();
                 automaticSeedPlanTriangles.clear();
                 automaticSeedTriangles.clear();
+                ++meshGeneration;
+                randomWalkLabelCache.invalidate();
                 meshReloaded = true;
                 uiState.modelLoadError.clear();
             }
@@ -1056,6 +1117,8 @@ int main(int argc, char** argv)
                             *pickedTriangle,
                             manualSeedTriangles,
                             uiState,
+                            meshGeneration,
+                            randomWalkLabelCache,
                             seedError
                         ))
                     {
@@ -1075,7 +1138,15 @@ int main(int argc, char** argv)
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =
                 activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
-            if (!refreshSegmentationPreview(renderer, mesh, currentSeeds, uiState, previewError))
+            if (!refreshSegmentationPreview(
+                    renderer,
+                    mesh,
+                    currentSeeds,
+                    uiState,
+                    meshGeneration,
+                    randomWalkLabelCache,
+                    previewError
+                ))
             {
                 uiState.modelLoadError = previewError;
             }
@@ -1088,7 +1159,15 @@ int main(int argc, char** argv)
             uiState.modelLoadError.clear();
 
             std::string previewError;
-            if (!refreshSegmentationPreview(renderer, mesh, manualSeedTriangles, uiState, previewError))
+            if (!refreshSegmentationPreview(
+                    renderer,
+                    mesh,
+                    manualSeedTriangles,
+                    uiState,
+                    meshGeneration,
+                    randomWalkLabelCache,
+                    previewError
+                ))
             {
                 uiState.modelLoadError = previewError;
             }
@@ -1104,7 +1183,16 @@ int main(int argc, char** argv)
             else
             {
                 std::string seedError;
-                if (addSeedTriangle(renderer, mesh, *randomSeed, manualSeedTriangles, uiState, seedError))
+                if (addSeedTriangle(
+                        renderer,
+                        mesh,
+                        *randomSeed,
+                        manualSeedTriangles,
+                        uiState,
+                        meshGeneration,
+                        randomWalkLabelCache,
+                        seedError
+                    ))
                 {
                     uiState.modelLoadError.clear();
                 }
