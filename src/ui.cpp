@@ -138,7 +138,11 @@ RendererUiActions drawRendererPanel(
                 uiState.mergeTargetSegmentCount =
                     std::clamp(uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
                 ImGui::SliderInt("Target regions", &uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
-                ImGui::SliderFloat("Merge cost limit", &uiState.mergeCostThreshold, 0.05f, 2.0f);
+                ImGui::Checkbox("Force target regions", &uiState.forceMergeTargetSegmentCount);
+                if (!uiState.forceMergeTargetSegmentCount)
+                {
+                    ImGui::SliderFloat("Merge cost limit", &uiState.mergeCostThreshold, 0.05f, 2.0f);
+                }
             }
             ImGui::Checkbox("Cleanup small segments", &uiState.cleanupSmallFineSegments);
             if (uiState.cleanupSmallFineSegments)
@@ -146,7 +150,14 @@ RendererUiActions drawRendererPanel(
                 uiState.minFineSegmentTriangles = std::clamp(uiState.minFineSegmentTriangles, 2, 128);
                 ImGui::SliderInt("Min triangles", &uiState.minFineSegmentTriangles, 2, 128);
             }
-            ImGui::TextUnformatted("Lower merge cost means a weaker boundary, so it merges first.");
+            if (uiState.forceMergeTargetSegmentCount)
+            {
+                ImGui::TextUnformatted("Force target keeps merging until the requested region count is reached.");
+            }
+            else
+            {
+                ImGui::TextUnformatted("Lower merge cost means a weaker boundary, so it merges first.");
+            }
         }
     }
     if (uiState.showSegmentation && !uiState.automaticSegmentation && seedTriangleCount == 0)

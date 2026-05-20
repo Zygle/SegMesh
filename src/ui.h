@@ -41,6 +41,7 @@ struct RendererUiState
     int automaticStepSeedCount = 1;
     bool mergeFineSegments = true;
     int mergeTargetSegmentCount = 30;
+    bool forceMergeTargetSegmentCount = true;
     float mergeCostThreshold = 0.5f;
     bool cleanupSmallFineSegments = true;
     int minFineSegmentTriangles = 24;

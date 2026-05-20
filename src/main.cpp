@@ -602,11 +602,14 @@ bool refreshSegmentationPreview(
         && uiState.mergeFineSegments && !automaticStepInProgress)
     {
         const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.mergeTargetSegmentCount, 1));
+        const double mergeCostLimit = uiState.forceMergeTargetSegmentCount
+            ? std::numeric_limits<double>::infinity()
+            : static_cast<double>(uiState.mergeCostThreshold);
         if (!segmesh::mergeSegmentsByBoundaryCost(
                 mesh,
                 uiState.segmentationModelType,
                 mergeTargetSegmentCount,
-                static_cast<double>(uiState.mergeCostThreshold),
+                mergeCostLimit,
                 triangleLabels,
                 error
             ))
@@ -887,6 +890,7 @@ int main(int argc, char** argv)
         const int previousAutomaticStepSeedCount = uiState.automaticStepSeedCount;
         const bool previousMergeFineSegments = uiState.mergeFineSegments;
         const int previousMergeTargetSegmentCount = uiState.mergeTargetSegmentCount;
+        const bool previousForceMergeTargetSegmentCount = uiState.forceMergeTargetSegmentCount;
         const float previousMergeCostThreshold = uiState.mergeCostThreshold;
         const bool previousCleanupSmallFineSegments = uiState.cleanupSmallFineSegments;
         const int previousMinFineSegmentTriangles = uiState.minFineSegmentTriangles;
@@ -945,6 +949,7 @@ int main(int argc, char** argv)
         const bool mergeSettingsChanged =
             uiState.mergeFineSegments != previousMergeFineSegments
             || uiState.mergeTargetSegmentCount != previousMergeTargetSegmentCount
+            || uiState.forceMergeTargetSegmentCount != previousForceMergeTargetSegmentCount
             || uiState.mergeCostThreshold != previousMergeCostThreshold
             || uiState.cleanupSmallFineSegments != previousCleanupSmallFineSegments
             || uiState.minFineSegmentTriangles != previousMinFineSegmentTriangles;

@@ -18,6 +18,9 @@ namespace
 {
 constexpr double kCoplanarNormalDifferenceEpsilon = 1.0e-8;
 constexpr double kCoplanarPlaneDistanceEpsilon = 1.0e-7;
+constexpr double kFineSeedMinImportance = 0.25;
+constexpr double kFineSeedMaxImportance = 6.0;
+constexpr double kFineSeedSpacingExponent = 1.25;
 
 double dot(const segmesh::Float3& a, const segmesh::Float3& b)
 {
@@ -443,7 +446,8 @@ std::vector<double> computeFineSeedImportance(
             ? 1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0)
             : 1.0 + 1.5 * normalVariation + 1.25 * engineeringVariation + 0.4 * radialDistance;
         const double spacingBias = 0.5 + 0.5 * std::clamp(areaWeight * (1.0 + averageEdgeLength), 0.0, 2.0);
-        importance[static_cast<std::size_t>(faceIndex)] = std::max(featureBias * spacingBias, 1.0e-6);
+        importance[static_cast<std::size_t>(faceIndex)] =
+            std::clamp(featureBias * spacingBias, kFineSeedMinImportance, kFineSeedMaxImportance);
     }
 
     return importance;
@@ -864,8 +868,10 @@ bool selectAutomaticSeedsFine(
                 continue;
             }
 
-            // Sec. 4.2.1: approximate feature-sensitive sampling by combining spacing with local feature importance.
-            const double score = distance * importance[static_cast<std::size_t>(faceIndex)];
+            // Sec. 4.2.1 approximation: keep feature bias, but make spacing dominate tiny/noisy features.
+            const double featureWeight = std::sqrt(importance[static_cast<std::size_t>(faceIndex)]);
+            const double spacingWeight = std::pow(std::max(distance, 0.0), kFineSeedSpacingExponent);
+            const double score = spacingWeight * featureWeight;
             if (score > nextScore)
             {
                 nextScore = score;
@@ -1053,15 +1059,15 @@ bool mergeSegmentsByBoundaryCost(
                 }
 
                 const double commonAverage = commonDifference[index] / commonLength[index];
-                // Eq. (14): compare the shared boundary against the combined segment boundaries.
+                // Eq. (14): compare the shared boundary against the union of the two current boundaries.
                 const double unionDifference =
                     boundaryDifference[static_cast<std::size_t>(segmentA)]
                     + boundaryDifference[static_cast<std::size_t>(segmentB)]
-                    - 2.0 * commonDifference[index];
+                    - commonDifference[index];
                 const double unionLength =
                     boundaryLength[static_cast<std::size_t>(segmentA)]
                     + boundaryLength[static_cast<std::size_t>(segmentB)]
-                    - 2.0 * commonLength[index];
+                    - commonLength[index];
                 if (unionLength <= 1.0e-12)
                 {
                     continue;
