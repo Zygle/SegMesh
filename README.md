@@ -6,6 +6,8 @@ Y.-K. Lai, S.-M. Hu, R. R. Martin, P. L. Rosin, [*Rapid and Effective Segmentati
 
 The project loads triangle meshes from `.obj`, builds face adjacency and per-face geometry on the CPU, solves segmentation on the face graph with Eigen sparse linear algebra, and renders both the source mesh and segmentation preview with bgfx.
 
+The graphical segmentation model follows the paper's dihedral/concavity weighting most closely. The engineering model is experimental: it adds approximate normal, Gaussian-curvature, and mean-curvature differences, but it does not implement the paper's robust integral-invariant curvature estimator.
+
 ## What the project does
 
 1. Load an `.obj` mesh with OpenMesh.
@@ -68,6 +70,8 @@ The merge stage:
 - stops when:
   - the target region count is reached, or
   - the best remaining merge cost exceeds the chosen threshold
+
+The UI can optionally force the requested target region count. Forced merging is useful for exact counts, but it can merge across strong boundaries.
 
 This is based on Sec. 4.2.2 of the paper.
 

@@ -11,6 +11,7 @@
 #include <limits>
 #include <queue>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -990,22 +991,26 @@ bool mergeSegmentsByBoundaryCost(
         }
     }
 
-    const auto pairIndex = [initialSegmentCount](uint32_t a, uint32_t b) -> std::size_t
-    {
-        return static_cast<std::size_t>(a) * static_cast<std::size_t>(initialSegmentCount)
-            + static_cast<std::size_t>(b);
-    };
-
     while (currentSegmentCount > targetSegmentCount)
     {
-        std::vector<bool> currentRoots(initialSegmentCount, false);
         std::vector<double> boundaryDifference(initialSegmentCount, 0.0);
         std::vector<double> boundaryLength(initialSegmentCount, 0.0);
-        std::vector<double> commonDifference(
-            static_cast<std::size_t>(initialSegmentCount) * static_cast<std::size_t>(initialSegmentCount),
-            0.0
-        );
-        std::vector<double> commonLength(commonDifference.size(), 0.0);
+
+        struct AdjacentSegmentPair
+        {
+            uint32_t segmentA = 0;
+            uint32_t segmentB = 0;
+            double commonDifference = 0.0;
+            double commonLength = 0.0;
+        };
+
+        const auto pairKey = [](uint32_t a, uint32_t b) -> uint64_t
+        {
+            return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
+        };
+
+        std::unordered_map<uint64_t, AdjacentSegmentPair> adjacentPairs;
+        adjacentPairs.reserve(edges.size());
 
         for (const FaceGraphEdgeInfo& edge : edges)
         {
@@ -1013,8 +1018,6 @@ bool mergeSegmentsByBoundaryCost(
             const uint32_t label1 = inOutTriangleLabels[static_cast<std::size_t>(edge.face1)];
             const uint32_t root0 = findSegmentRoot(parents, label0);
             const uint32_t root1 = findSegmentRoot(parents, label1);
-            currentRoots[static_cast<std::size_t>(root0)] = true;
-            currentRoots[static_cast<std::size_t>(root1)] = true;
 
             if (root0 == root1)
             {
@@ -1031,62 +1034,58 @@ bool mergeSegmentsByBoundaryCost(
 
             const uint32_t a = std::min(root0, root1);
             const uint32_t b = std::max(root0, root1);
-            commonDifference[pairIndex(a, b)] += edgeBoundaryDifference;
-            commonLength[pairIndex(a, b)] += edgeBoundaryLength;
+            auto [pairIt, inserted] = adjacentPairs.try_emplace(pairKey(a, b));
+            if (inserted)
+            {
+                pairIt->second.segmentA = a;
+                pairIt->second.segmentB = b;
+            }
+
+            pairIt->second.commonDifference += edgeBoundaryDifference;
+            pairIt->second.commonLength += edgeBoundaryLength;
         }
 
         using MergeCandidate = std::tuple<double, uint32_t, uint32_t>;
         std::priority_queue<MergeCandidate, std::vector<MergeCandidate>, std::greater<MergeCandidate> > queue;
 
-        for (uint32_t segmentA = 0; segmentA < initialSegmentCount; ++segmentA)
+        for (const auto& pairEntry : adjacentPairs)
         {
-            if (!currentRoots[static_cast<std::size_t>(segmentA)])
+            const AdjacentSegmentPair& pair = pairEntry.second;
+            if (pair.commonLength <= 1.0e-12)
             {
                 continue;
             }
 
-            for (uint32_t segmentB = segmentA + 1; segmentB < initialSegmentCount; ++segmentB)
+            const uint32_t segmentA = pair.segmentA;
+            const uint32_t segmentB = pair.segmentB;
+            const double commonAverage = pair.commonDifference / pair.commonLength;
+            // Eq. (14): compare the shared boundary against the union of the two current boundaries.
+            const double unionDifference =
+                boundaryDifference[static_cast<std::size_t>(segmentA)]
+                + boundaryDifference[static_cast<std::size_t>(segmentB)]
+                - pair.commonDifference;
+            const double unionLength =
+                boundaryLength[static_cast<std::size_t>(segmentA)]
+                + boundaryLength[static_cast<std::size_t>(segmentB)]
+                - pair.commonLength;
+            if (unionLength <= 1.0e-12)
             {
-                if (!currentRoots[static_cast<std::size_t>(segmentB)])
-                {
-                    continue;
-                }
-
-                const std::size_t index = pairIndex(segmentA, segmentB);
-                if (commonLength[index] <= 1.0e-12)
-                {
-                    continue;
-                }
-
-                const double commonAverage = commonDifference[index] / commonLength[index];
-                // Eq. (14): compare the shared boundary against the union of the two current boundaries.
-                const double unionDifference =
-                    boundaryDifference[static_cast<std::size_t>(segmentA)]
-                    + boundaryDifference[static_cast<std::size_t>(segmentB)]
-                    - commonDifference[index];
-                const double unionLength =
-                    boundaryLength[static_cast<std::size_t>(segmentA)]
-                    + boundaryLength[static_cast<std::size_t>(segmentB)]
-                    - commonLength[index];
-                if (unionLength <= 1.0e-12)
-                {
-                    continue;
-                }
-
-                const double unionAverage = unionDifference / unionLength;
-                if (unionAverage <= 1.0e-12)
-                {
-                    continue;
-                }
-
-                const double relativeCost = commonAverage / unionAverage;
-                if (!std::isfinite(relativeCost))
-                {
-                    continue;
-                }
-
-                queue.emplace(relativeCost, segmentA, segmentB);
+                continue;
             }
+
+            const double unionAverage = unionDifference / unionLength;
+            if (unionAverage <= 1.0e-12)
+            {
+                continue;
+            }
+
+            const double relativeCost = commonAverage / unionAverage;
+            if (!std::isfinite(relativeCost))
+            {
+                continue;
+            }
+
+            queue.emplace(relativeCost, segmentA, segmentB);
         }
 
         if (queue.empty())
@@ -1188,14 +1187,7 @@ bool mergeSmallSegmentsByTriangleCount(
             double sharedLength = 0.0;
         };
 
-        std::vector<NeighborStats> neighborStats(
-            static_cast<std::size_t>(segmentCount) * static_cast<std::size_t>(segmentCount)
-        );
-        const auto pairIndex = [segmentCount](uint32_t a, uint32_t b) -> std::size_t
-        {
-            return static_cast<std::size_t>(a) * static_cast<std::size_t>(segmentCount)
-                + static_cast<std::size_t>(b);
-        };
+        std::vector<std::unordered_map<uint32_t, NeighborStats> > neighborStats(segmentCount);
 
         for (const FaceGraphEdgeInfo& edge : edges)
         {
@@ -1207,8 +1199,8 @@ bool mergeSmallSegmentsByTriangleCount(
             }
 
             const double edgeBoundaryDifference = edge.edgeLength * edge.difference;
-            NeighborStats& stats01 = neighborStats[pairIndex(label0, label1)];
-            NeighborStats& stats10 = neighborStats[pairIndex(label1, label0)];
+            NeighborStats& stats01 = neighborStats[static_cast<std::size_t>(label0)][label1];
+            NeighborStats& stats10 = neighborStats[static_cast<std::size_t>(label1)][label0];
             stats01.sharedDifference += edgeBoundaryDifference;
             stats01.sharedLength += edge.edgeLength;
             stats10.sharedDifference += edgeBoundaryDifference;
@@ -1233,14 +1225,15 @@ bool mergeSmallSegmentsByTriangleCount(
             double bestNeighborAverage = std::numeric_limits<double>::infinity();
             double bestNeighborSharedLength = -1.0;
 
-            for (uint32_t neighborIndex = 0; neighborIndex < segmentCount; ++neighborIndex)
+            for (const auto& neighborEntry : neighborStats[static_cast<std::size_t>(segmentIndex)])
             {
+                const uint32_t neighborIndex = neighborEntry.first;
                 if (neighborIndex == segmentIndex || segmentSizes[static_cast<std::size_t>(neighborIndex)] == 0)
                 {
                     continue;
                 }
 
-                const NeighborStats& stats = neighborStats[pairIndex(segmentIndex, neighborIndex)];
+                const NeighborStats& stats = neighborEntry.second;
                 if (stats.sharedLength <= 1.0e-12)
                 {
                     continue;

@@ -88,6 +88,10 @@ RendererUiActions drawRendererPanel(
     ImGui::TextUnformatted("Segmentation model");
     ImGui::Combo("##SegmentationModel", &segmentationModel, segmentationModelLabels, IM_ARRAYSIZE(segmentationModelLabels));
     uiState.segmentationModelType = static_cast<SegmentationModelType>(segmentationModel);
+    if (uiState.segmentationModelType == SegmentationModelType::Engineering)
+    {
+        ImGui::TextUnformatted("Engineering mode uses approximate curvature heuristics.");
+    }
     ImGui::Separator();
     ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
     if (uiState.automaticSegmentation)
@@ -152,7 +156,7 @@ RendererUiActions drawRendererPanel(
             }
             if (uiState.forceMergeTargetSegmentCount)
             {
-                ImGui::TextUnformatted("Force target keeps merging until the requested region count is reached.");
+                ImGui::TextUnformatted("Force target can merge across strong boundaries to reach the requested count.");
             }
             else
             {
