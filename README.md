@@ -4,7 +4,7 @@ SegMesh is a C++20 mesh viewer and segmentation prototype for experimenting with
 
 Y.-K. Lai, S.-M. Hu, R. R. Martin, P. L. Rosin, [*Rapid and Effective Segmentation of 3D Models Using Random Walks*](https://cg.cs.tsinghua.edu.cn/papers/cagd_2009_segmentation.pdf), Computer Aided Geometric Design 26 (2009) 665-679.
 
-The project loads triangle meshes from `.obj`, builds face adjacency and per-face geometry on the CPU, solves segmentation on the face graph with Eigen sparse linear algebra, and renders both the source mesh and segmentation preview with bgfx.
+The project loads triangle meshes from `.obj`, builds face adjacency and per-face geometry on the CPU, solves segmentation on the face graph with Eigen sparse linear algebra, and renders the source mesh plus segmentation preview with bgfx.
 
 The graphical segmentation model follows the paper's dihedral/concavity weighting most closely. The engineering model is experimental: it adds approximate normal, Gaussian-curvature, and mean-curvature differences, but it does not implement the paper's robust integral-invariant curvature estimator.
 
@@ -25,7 +25,7 @@ The graphical segmentation model follows the paper's dihedral/concavity weightin
    - automatically with fine seeding
 5. Solve the random-walk segmentation on the CPU.
 6. Optionally merge fine oversegmented regions.
-7. Render the result with one color per segment.
+7. Render colored segments with optional black borders.
 
 ### Manual segmentation
 
@@ -58,6 +58,10 @@ It currently uses:
 The fine seeding stage is inspired by Sec. 4.2, but it is still an approximation of the paper's feature-sensitive particle distribution.
 
 ![](assets/example1.png)
+
+### Step-by-step preview
+
+Automatic segmentation can be previewed step by step. The app generates the automatic seed plan, then lets you reveal one generated seed at a time before finishing the full solve.
 
 ### Fine-mode merging
 
@@ -93,9 +97,9 @@ You need these available to CMake:
 - Eigen3
 - OpenMesh
 - pkg-config
-- Wayland client development headers/libraries
+- Wayland or X11 development headers/libraries
 
-On Linux this project currently assumes a Wayland runtime path in the renderer. The current renderer initialization in [renderer.cpp](src/renderer.cpp) explicitly requires Wayland handles.
+CMake enables Wayland or X11 support depending on the development packages available on the system.
 
 ### bgfx build outputs
 
@@ -125,6 +129,11 @@ git submodule update --init --recursive
 
 This project expects the bgfx static libraries and `shaderc` executable to be available before configuring the main project.
 
+Build bgfx with the provided script:
+```bash
+./scripts/bootstrap.sh
+```
+
 If they are not in a location that CMake can auto-detect, provide `BGFX_BIN_DIR`.
 
 ### 3. Configure and build
@@ -143,7 +152,9 @@ Run with the first OBJ found under `assets/`:
 ./build/segmesh
 ```
 
+This project was made for a course at BME. The Hungarian report is here:
 
+[assets/beszamolo.pdf](assets/beszamolo.pdf)
 
-considering:
-https://github.com/zeux/meshoptimizer
+Possible future preprocessing reference:
+[meshoptimizer](https://github.com/zeux/meshoptimizer)
