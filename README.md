@@ -42,7 +42,7 @@ It currently uses:
 
 This corresponds to the paper's coarse-scale seeding idea from Sec. 4.1.
 
-![](assets/example.png)
+![](assets/example0.png)
 
 
 ### Automatic fine segmentation
@@ -57,7 +57,7 @@ It currently uses:
 
 The fine seeding stage is inspired by Sec. 4.2, but it is still an approximation of the paper's feature-sensitive particle distribution.
 
-![](assets/example1.png)
+![](assets/example2.png)
 
 ### Step-by-step preview
 
