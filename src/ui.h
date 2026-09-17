@@ -15,6 +15,13 @@ enum class AutomaticSegmentationMode : int
     Fine = 1,
 };
 
+enum class SegmentBorderDisplayMode : int
+{
+    Original = 0,
+    Smoothed = 1,
+    Both = 2,
+};
+
 struct RendererUiState
 {
     float cameraDistance = 3.0f;
@@ -33,6 +40,9 @@ struct RendererUiState
 
     bool showSegmentation = false;
     bool showSegmentBorders = true;
+    SegmentBorderDisplayMode segmentBorderDisplayMode = SegmentBorderDisplayMode::Both;
+    float borderDegreeElevationTolerance = 0.002f;
+    bool showBezierControlPolygon = false;
     bool automaticSegmentation = false;
     SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;
     AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;

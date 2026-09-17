@@ -25,7 +25,6 @@ The graphical segmentation model follows the paper's dihedral/concavity weightin
    - automatically with fine seeding
 5. Solve the random-walk segmentation on the CPU.
 6. Optionally merge fine oversegmented regions.
-7. Render colored segments with optional black borders.
 
 ### Manual segmentation
 

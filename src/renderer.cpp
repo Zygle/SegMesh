@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -119,6 +120,86 @@ void destroyIndexBuffer(bgfx::IndexBufferHandle& handle)
     }
 
     handle = BGFX_INVALID_HANDLE;
+}
+
+bool uploadLineMesh(
+    const std::vector<segmesh::Float3>& positions,
+    const std::vector<uint32_t>& indices,
+    const char* description,
+    segmesh::GpuMesh& outMesh,
+    std::string& error
+)
+{
+    outMesh = {};
+    if (indices.empty())
+    {
+        return true;
+    }
+
+    if (positions.empty())
+    {
+        error = std::string(description) + " has indices but no vertices.";
+        return false;
+    }
+
+    if ((indices.size() % 2) != 0)
+    {
+        error = std::string(description) + " index count must describe a line list.";
+        return false;
+    }
+
+    if (positions.size() > std::numeric_limits<uint32_t>::max()
+        || positions.size() > std::numeric_limits<uint32_t>::max() / sizeof(segmesh::MeshVertex)
+        || indices.size() > std::numeric_limits<uint32_t>::max() / sizeof(uint32_t))
+    {
+        error = std::string(description) + " is too large for a bgfx buffer.";
+        return false;
+    }
+
+    for (const uint32_t index : indices)
+    {
+        if (index >= positions.size())
+        {
+            error = std::string(description) + " contains an out-of-range vertex index.";
+            return false;
+        }
+    }
+
+    constexpr uint32_t kNeutralLineNormal = 0xffff8080u;
+    std::vector<segmesh::MeshVertex> vertices;
+    vertices.reserve(positions.size());
+    for (const segmesh::Float3& position : positions)
+    {
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+        {
+            error = std::string(description) + " contains a non-finite vertex position.";
+            return false;
+        }
+
+        vertices.push_back({position.x, position.y, position.z, kNeutralLineNormal});
+    }
+
+    const bgfx::Memory* vmem = bgfx::copy(
+        vertices.data(),
+        static_cast<uint32_t>(vertices.size() * sizeof(segmesh::MeshVertex))
+    );
+    outMesh.vbh = bgfx::createVertexBuffer(vmem, segmesh::MeshVertex::layout);
+
+    const bgfx::Memory* imem = bgfx::copy(
+        indices.data(),
+        static_cast<uint32_t>(indices.size() * sizeof(uint32_t))
+    );
+    outMesh.ibh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+    outMesh.indexCount = static_cast<uint32_t>(indices.size());
+
+    if (!bgfx::isValid(outMesh.vbh) || !bgfx::isValid(outMesh.ibh))
+    {
+        error = std::string("Failed to create bgfx buffers for ") + description + ".";
+        destroyGpuMeshHandles(outMesh);
+        return false;
+    }
+
+    return true;
 }
 
 segmesh::Float3 colorForGroup(uint32_t groupIndex)
@@ -323,9 +404,10 @@ bool Renderer::initialize(GLFWwindow* window, uint32_t width, uint32_t height, s
     uLightColor_ = bgfx::createUniform("u_lightColor", bgfx::UniformType::Vec4);
     uCameraPos_ = bgfx::createUniform("u_cameraPos", bgfx::UniformType::Vec4);
     uMaterial_ = bgfx::createUniform("u_material", bgfx::UniformType::Vec4);
+    uDrawParams_ = bgfx::createUniform("u_drawParams", bgfx::UniformType::Vec4);
 
     if (!bgfx::isValid(uBaseColor_) || !bgfx::isValid(uLightDir_) || !bgfx::isValid(uLightColor_)
-        || !bgfx::isValid(uCameraPos_) || !bgfx::isValid(uMaterial_))
+        || !bgfx::isValid(uCameraPos_) || !bgfx::isValid(uMaterial_) || !bgfx::isValid(uDrawParams_))
     {
         error = "Failed to create one or more renderer uniforms.";
         shutdown();
@@ -527,6 +609,45 @@ bool Renderer::setTriangleGroups(
     return true;
 }
 
+bool Renderer::setSegmentBorderOverlay(const BorderCurveOverlay& overlay, std::string& error)
+{
+    if (!initialized_ || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
+    {
+        error = "Renderer mesh must be loaded before assigning a segment border overlay.";
+        return false;
+    }
+
+    GpuMesh newSmoothedBorderMesh{};
+    if (!uploadLineMesh(
+            overlay.vertices,
+            overlay.indices,
+            "the smoothed segment border overlay",
+            newSmoothedBorderMesh,
+            error
+        ))
+    {
+        return false;
+    }
+
+    GpuMesh newControlPolygonMesh{};
+    if (!uploadLineMesh(
+            overlay.controlVertices,
+            overlay.controlIndices,
+            "the Bezier control polygon overlay",
+            newControlPolygonMesh,
+            error
+        ))
+    {
+        destroyGpuMeshHandles(newSmoothedBorderMesh);
+        return false;
+    }
+
+    clearSegmentBorderOverlay();
+    smoothedBorderMesh_ = newSmoothedBorderMesh;
+    controlPolygonMesh_ = newControlPolygonMesh;
+    return true;
+}
+
 void Renderer::clearSeedTriangle()
 {
     destroyIndexBuffer(seedTriangleIbh_);
@@ -544,6 +665,13 @@ void Renderer::clearTriangleGroups()
     }
 
     triangleGroupDraws_.clear();
+    clearSegmentBorderOverlay();
+}
+
+void Renderer::clearSegmentBorderOverlay()
+{
+    destroyGpuMeshHandles(smoothedBorderMesh_);
+    destroyGpuMeshHandles(controlPolygonMesh_);
 }
 
 void Renderer::resize(uint32_t width, uint32_t height)
@@ -592,7 +720,9 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
     const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, uiState.lightIntensity};
     const float lightColorUniform[4] = {uiState.lightColor[0], uiState.lightColor[1], uiState.lightColor[2], 1.0f};
     const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
-    const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 0.0f};
+    const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 1.0f};
+    const float surfaceDrawParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float borderDrawParams[4] = {2.0e-6f, 0.0f, 0.0f, 0.0f};
 
     const uint64_t state = BGFX_STATE_WRITE_RGB
         | BGFX_STATE_WRITE_A
@@ -602,7 +732,12 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
 
     // Reuse the same shaded draw setup for the base mesh, groups, outlines, and seed overlays.
     const auto submitMeshPass =
-        [&](bgfx::IndexBufferHandle ibh, uint32_t indexCount, const float color[4], const float material[4], uint64_t drawState)
+        [&](bgfx::IndexBufferHandle ibh,
+            uint32_t indexCount,
+            const float color[4],
+            const float material[4],
+            const float drawParams[4],
+            uint64_t drawState)
     {
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, gpuMesh_.vbh);
@@ -612,39 +747,94 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         bgfx::setUniform(uLightColor_, lightColorUniform);
         bgfx::setUniform(uCameraPos_, cameraPosUniform);
         bgfx::setUniform(uMaterial_, material);
+        bgfx::setUniform(uDrawParams_, drawParams);
+        bgfx::setState(drawState);
+        bgfx::submit(0, meshProgram_);
+    };
+
+    const auto submitLinePass =
+        [&](const GpuMesh& lineMesh, const float color[4], const float material[4], uint64_t drawState)
+    {
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, lineMesh.vbh);
+        bgfx::setIndexBuffer(lineMesh.ibh, 0, lineMesh.indexCount);
+        bgfx::setUniform(uBaseColor_, color);
+        bgfx::setUniform(uLightDir_, lightDirUniform);
+        bgfx::setUniform(uLightColor_, lightColorUniform);
+        bgfx::setUniform(uCameraPos_, cameraPosUniform);
+        bgfx::setUniform(uMaterial_, material);
+        bgfx::setUniform(uDrawParams_, borderDrawParams);
         bgfx::setState(drawState);
         bgfx::submit(0, meshProgram_);
     };
 
     if (triangleGroupDraws_.empty())
     {
-        submitMeshPass(gpuMesh_.ibh, gpuMesh_.indexCount, baseColorUniform, materialUniform, state);
+        submitMeshPass(
+            gpuMesh_.ibh,
+            gpuMesh_.indexCount,
+            baseColorUniform,
+            materialUniform,
+            surfaceDrawParams,
+            state
+        );
     }
     else
     {
         for (const TriangleGroupDraw& groupDraw : triangleGroupDraws_)
         {
             const float groupColorUniform[4] = {groupDraw.color.x, groupDraw.color.y, groupDraw.color.z, 1.0f};
-            submitMeshPass(groupDraw.ibh, groupDraw.indexCount, groupColorUniform, materialUniform, state);
+            submitMeshPass(
+                groupDraw.ibh,
+                groupDraw.indexCount,
+                groupColorUniform,
+                materialUniform,
+                surfaceDrawParams,
+                state
+            );
         }
     }
 
-    if (uiState.showSegmentBorders && bgfx::isValid(segmentBorderIbh_) && segmentBorderIndexCount_ > 0)
+    const bool showOriginalBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Original
+        || uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Both;
+    const bool showSmoothedBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Smoothed
+        || uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Both;
+    const float borderMaterialUniform[4] = {1.0f, 0.0f, 1.0f, 0.0f};
+    const uint64_t borderState = BGFX_STATE_WRITE_RGB
+        | BGFX_STATE_WRITE_A
+        | BGFX_STATE_DEPTH_TEST_LEQUAL
+        | BGFX_STATE_PT_LINES
+        | BGFX_STATE_LINEAA
+        | BGFX_STATE_MSAA;
+
+    if (uiState.showSegmentBorders && showOriginalBorders
+        && bgfx::isValid(segmentBorderIbh_) && segmentBorderIndexCount_ > 0)
     {
         const float borderColorUniform[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-        const float borderMaterialUniform[4] = {1.0f, 0.0f, 1.0f, 0.0f};
-        const uint64_t borderState = BGFX_STATE_WRITE_RGB
-            | BGFX_STATE_WRITE_A
-            | BGFX_STATE_DEPTH_TEST_LEQUAL
-            | BGFX_STATE_PT_LINES
-            | BGFX_STATE_MSAA;
         submitMeshPass(
             segmentBorderIbh_,
             segmentBorderIndexCount_,
             borderColorUniform,
             borderMaterialUniform,
+            borderDrawParams,
             borderState
         );
+    }
+
+    if (uiState.showSegmentBorders && showSmoothedBorders
+        && bgfx::isValid(smoothedBorderMesh_.vbh) && bgfx::isValid(smoothedBorderMesh_.ibh)
+        && smoothedBorderMesh_.indexCount > 0)
+    {
+        const float smoothedBorderColorUniform[4] = {0.02f, 0.82f, 1.0f, 1.0f};
+        submitLinePass(smoothedBorderMesh_, smoothedBorderColorUniform, borderMaterialUniform, borderState);
+    }
+
+    if (uiState.showSegmentBorders && showSmoothedBorders && uiState.showBezierControlPolygon
+        && bgfx::isValid(controlPolygonMesh_.vbh) && bgfx::isValid(controlPolygonMesh_.ibh)
+        && controlPolygonMesh_.indexCount > 0)
+    {
+        const float controlPolygonColorUniform[4] = {1.0f, 0.30f, 0.04f, 1.0f};
+        submitLinePass(controlPolygonMesh_, controlPolygonColorUniform, borderMaterialUniform, borderState);
     }
 
     if (bgfx::isValid(seedTriangleIbh_))
@@ -660,6 +850,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
             static_cast<uint32_t>(seedTriangleIndices_.size()),
             seedColorUniform,
             materialUniform,
+            surfaceDrawParams,
             seedState
         );
     }
@@ -699,6 +890,7 @@ void Renderer::shutdown()
     destroyUniform(uLightColor_);
     destroyUniform(uCameraPos_);
     destroyUniform(uMaterial_);
+    destroyUniform(uDrawParams_);
 
     if (bgfx::isValid(meshProgram_))
     {

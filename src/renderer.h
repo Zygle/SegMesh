@@ -1,5 +1,6 @@
 #pragma once
 
+#include "border_curves.h"
 #include "mesh_types.h"
 #include "ui.h"
 
@@ -29,8 +30,10 @@ public:
         uint32_t groupCount,
         std::string& error
     );
+    bool setSegmentBorderOverlay(const BorderCurveOverlay& overlay, std::string& error);
     void clearSeedTriangle();
     void clearTriangleGroups();
+    void clearSegmentBorderOverlay();
     void resize(uint32_t width, uint32_t height);
     void renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState);
     void frame();
@@ -57,9 +60,12 @@ private:
     bgfx::UniformHandle uLightColor_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uCameraPos_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uMaterial_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uDrawParams_ = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle seedTriangleIbh_ = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle segmentBorderIbh_ = BGFX_INVALID_HANDLE;
     uint32_t segmentBorderIndexCount_ = 0;
+    GpuMesh smoothedBorderMesh_{};
+    GpuMesh controlPolygonMesh_{};
     std::vector<uint32_t> seedTriangleIndices_;
     std::vector<TriangleGroupDraw> triangleGroupDraws_;
 };

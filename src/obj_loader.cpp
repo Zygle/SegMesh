@@ -341,9 +341,14 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
     positions *= scale;
 
     std::vector<Eigen::Vector3f> preprocessedPositions(vertexCount);
+    outMesh.canonicalPositions.resize(vertexCount);
+    outMesh.canonicalNormals.resize(vertexCount);
     for (const OpenMeshTriMesh::VertexHandle vh : mesh.vertices())
     {
-        preprocessedPositions[vh.idx()] = positions.col(vh.idx());
+        const std::size_t vertexIndex = static_cast<std::size_t>(vh.idx());
+        preprocessedPositions[vertexIndex] = positions.col(vh.idx());
+        outMesh.canonicalPositions[vertexIndex] = toFloat3(preprocessedPositions[vertexIndex]);
+        outMesh.canonicalNormals[vertexIndex] = toFloat3(normalizeSafe(toEigen(mesh.normal(vh))));
     }
 
     outMesh.indices.reserve(mesh.n_faces() * 3);
@@ -354,6 +359,7 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
     outMesh.faceMeanCurvatures.reserve(mesh.n_faces());
     outMesh.faceAreas.reserve(mesh.n_faces());
     outMesh.faceRenderEdges.reserve(mesh.n_faces());
+    outMesh.faceTopologyVertexIndices.reserve(mesh.n_faces());
     std::vector<int32_t> faceMap(mesh.n_faces(), -1);
     std::vector<std::array<int32_t, 3> > faceVertexIndices;
     faceVertexIndices.reserve(mesh.n_faces());
@@ -409,6 +415,11 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         outMesh.faceNormals.push_back(toFloat3(faceNormal));
         outMesh.faceAreas.push_back(area);
         outMesh.faceRenderEdges.push_back({});
+        outMesh.faceTopologyVertexIndices.push_back({
+            static_cast<uint32_t>(faceVertices[0].idx()),
+            static_cast<uint32_t>(faceVertices[1].idx()),
+            static_cast<uint32_t>(faceVertices[2].idx()),
+        });
         faceVertexIndices.push_back({
             faceVertices[0].idx(),
             faceVertices[1].idx(),

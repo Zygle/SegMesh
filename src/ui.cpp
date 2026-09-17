@@ -82,7 +82,32 @@ RendererUiActions drawRendererPanel(
     ImGui::Begin("Segmentation");
 
     ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
-    ImGui::Checkbox("Black segment borders", &uiState.showSegmentBorders);
+    ImGui::Checkbox("Segment borders", &uiState.showSegmentBorders);
+    if (uiState.showSegmentBorders)
+    {
+        int borderDisplayMode = static_cast<int>(uiState.segmentBorderDisplayMode);
+        const char* borderDisplayModeLabels[] = {"Original", "Smoothed", "Both"};
+        ImGui::Combo(
+            "Border style",
+            &borderDisplayMode,
+            borderDisplayModeLabels,
+            IM_ARRAYSIZE(borderDisplayModeLabels)
+        );
+        uiState.segmentBorderDisplayMode = static_cast<SegmentBorderDisplayMode>(borderDisplayMode);
+
+        if (uiState.segmentBorderDisplayMode != SegmentBorderDisplayMode::Original)
+        {
+            ImGui::SliderFloat(
+                "Elevation tolerance",
+                &uiState.borderDegreeElevationTolerance,
+                0.0001f,
+                0.02f,
+                "%.4f"
+            );
+            ImGui::Checkbox("Show cubic control polygon", &uiState.showBezierControlPolygon);
+            ImGui::TextUnformatted("Cyan: smoothed border. Orange: cubic control polygon.");
+        }
+    }
     int segmentationModel = static_cast<int>(uiState.segmentationModelType);
     const char* segmentationModelLabels[] = {"Graphical", "Engineering"};
     ImGui::TextUnformatted("Segmentation model");

@@ -49,6 +49,9 @@ struct CpuMesh
 {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<Float3> canonicalPositions;
+    std::vector<Float3> canonicalNormals;
+    std::vector<std::array<uint32_t, 3> > faceTopologyVertexIndices;
     std::vector<Float3> faceCentroids;
     std::vector<Float3> faceNormals;
     std::vector<float> faceGaussianCurvatures;

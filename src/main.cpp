@@ -1,3 +1,4 @@
+#include "border_curves.h"
 #include "obj_loader.h"
 #include "renderer.h"
 #include "segmentation.h"
@@ -646,7 +647,34 @@ bool refreshSegmentationPreview(
         return true;
     }
 
-    return renderer.setTriangleGroups(mesh, triangleLabels, segmentCount, error);
+    if (!renderer.setTriangleGroups(mesh, triangleLabels, segmentCount, error))
+    {
+        return false;
+    }
+
+    segmesh::BorderCurveSettings borderCurveSettings{};
+    borderCurveSettings.tolerance = static_cast<double>(uiState.borderDegreeElevationTolerance);
+
+    segmesh::BorderCurveOverlay borderCurveOverlay;
+    if (!segmesh::buildSegmentBorderOverlay(
+            mesh,
+            triangleLabels,
+            borderCurveSettings,
+            borderCurveOverlay,
+            error
+        ))
+    {
+        renderer.clearSegmentBorderOverlay();
+        return false;
+    }
+
+    if (!renderer.setSegmentBorderOverlay(borderCurveOverlay, error))
+    {
+        renderer.clearSegmentBorderOverlay();
+        return false;
+    }
+
+    return true;
 }
 
 bool addSeedTriangle(
@@ -894,6 +922,7 @@ int main(int argc, char** argv)
         const float previousMergeCostThreshold = uiState.mergeCostThreshold;
         const bool previousCleanupSmallFineSegments = uiState.cleanupSmallFineSegments;
         const int previousMinFineSegmentTriangles = uiState.minFineSegmentTriangles;
+        const float previousBorderDegreeElevationTolerance = uiState.borderDegreeElevationTolerance;
         const std::vector<uint32_t>& seedsBeforeUi =
             activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
@@ -953,6 +982,8 @@ int main(int argc, char** argv)
             || uiState.mergeCostThreshold != previousMergeCostThreshold
             || uiState.cleanupSmallFineSegments != previousCleanupSmallFineSegments
             || uiState.minFineSegmentTriangles != previousMinFineSegmentTriangles;
+        const bool borderCurveSettingsChanged =
+            uiState.borderDegreeElevationTolerance != previousBorderDegreeElevationTolerance;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)
@@ -1138,7 +1169,7 @@ int main(int argc, char** argv)
         }
 
         if (previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged
-            || segmentationModelChanged)
+            || segmentationModelChanged || borderCurveSettingsChanged)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =

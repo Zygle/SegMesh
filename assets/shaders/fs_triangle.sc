@@ -19,7 +19,7 @@ void main()
     float spec = pow(max(dot(N, H), 0.0), u_material.z) * u_material.y;
 
     vec3 ambient = u_baseColor.rgb * u_material.x;
-    vec3 diffuse = u_baseColor.rgb * ndotl * u_lightColor.rgb * u_lightDir.w;
+    vec3 diffuse = u_baseColor.rgb * ndotl * u_lightColor.rgb * u_lightDir.w * u_material.w;
     vec3 specular = spec * u_lightColor.rgb;
 
     vec3 linearColor = ambient + diffuse + specular;
