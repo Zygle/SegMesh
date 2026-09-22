@@ -18,7 +18,8 @@
 namespace
 {
 constexpr double kCoincidentPointEpsilon = 1.0e-12;
-constexpr uint32_t kHardMaximumDegree = 64;
+constexpr uint32_t kMaximumDrawingSubdivisionDepth = 12;
+constexpr uint32_t kMinimumFitSamplingDepth = 5;
 
 struct LabelPair
 {
@@ -41,6 +42,17 @@ struct TracedChain
     LabelPair labels;
     std::vector<uint32_t> vertexIndices;
     bool closedLoopArc = false;
+    bool hasEndpointTangents = false;
+    Eigen::Vector3d startTangent{};
+    Eigen::Vector3d endTangent{};
+};
+
+struct CubicPiece
+{
+    std::array<segmesh::Float3, 4> controlPoints{};
+    std::size_t firstSample = 0;
+    std::size_t lastSample = 0;
+    segmesh::BorderCurveFitStats fitStats{};
 };
 
 Eigen::Vector3d toEigen(const segmesh::Float3& point)
@@ -120,30 +132,6 @@ std::array<segmesh::Float3, 4> lineEquivalentCubic(
         toFloat3(start + difference * (2.0 / 3.0)),
         last,
     };
-}
-
-double maximumControlPolygonDeviation(
-    std::span<const segmesh::Float3> controlPoints,
-    const std::array<segmesh::Float3, 4>& cubicControlPoints
-)
-{
-    if (controlPoints.size() < 2)
-    {
-        return 0.0;
-    }
-
-    const std::span<const segmesh::Float3> cubic(cubicControlPoints);
-    const double degree = static_cast<double>(controlPoints.size() - 1);
-    double maximumDeviation = 0.0;
-    for (std::size_t index = 0; index < controlPoints.size(); ++index)
-    {
-        const double parameter = static_cast<double>(index) / degree;
-        maximumDeviation = std::max(
-            maximumDeviation,
-            pointDistance(controlPoints[index], segmesh::evaluateBezier(cubic, parameter))
-        );
-    }
-    return maximumDeviation;
 }
 
 uint32_t otherEndpoint(const TopologyEdge& edge, uint32_t endpoint)
@@ -352,6 +340,51 @@ std::size_t halfPerimeterVertex(
     return bestIndex;
 }
 
+Eigen::Vector3d cyclicForwardTangent(
+    const std::vector<uint32_t>& cycle,
+    std::size_t index,
+    std::span<const segmesh::Float3> positions
+)
+{
+    const Eigen::Vector3d current = toEigen(positions[cycle[index]]);
+    Eigen::Vector3d incoming{};
+    Eigen::Vector3d outgoing{};
+
+    for (std::size_t offset = 1; offset < cycle.size(); ++offset)
+    {
+        const std::size_t previousIndex = (index + cycle.size() - offset) % cycle.size();
+        incoming = current - toEigen(positions[cycle[previousIndex]]);
+        if (incoming.squaredNorm() > kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+        {
+            incoming.normalize();
+            break;
+        }
+    }
+    for (std::size_t offset = 1; offset < cycle.size(); ++offset)
+    {
+        const std::size_t nextIndex = (index + offset) % cycle.size();
+        outgoing = toEigen(positions[cycle[nextIndex]]) - current;
+        if (outgoing.squaredNorm() > kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+        {
+            outgoing.normalize();
+            break;
+        }
+    }
+
+    Eigen::Vector3d tangent = incoming + outgoing;
+    if (tangent.squaredNorm() <= kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+    {
+        tangent = outgoing.squaredNorm() > kCoincidentPointEpsilon * kCoincidentPointEpsilon
+            ? outgoing
+            : incoming;
+    }
+    if (tangent.squaredNorm() <= kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+    {
+        return {};
+    }
+    return tangent.normalized();
+}
+
 void traceLabelPairEdges(
     const LabelPair& labels,
     const std::set<TopologyEdge>& edgeSet,
@@ -441,12 +474,513 @@ void traceLabelPairEdges(
         }
 
         const std::size_t splitIndex = halfPerimeterVertex(cycle, positions);
+        const Eigen::Vector3d startTangent = cyclicForwardTangent(cycle, 0, positions);
+        const Eigen::Vector3d splitTangent = cyclicForwardTangent(
+            cycle,
+            splitIndex,
+            positions
+        );
         std::vector<uint32_t> firstArc(cycle.begin(), cycle.begin() + splitIndex + 1);
         std::vector<uint32_t> secondArc(cycle.begin() + splitIndex, cycle.end());
         secondArc.push_back(cycle.front());
-        outChains.push_back({labels, std::move(firstArc), true});
-        outChains.push_back({labels, std::move(secondArc), true});
+        outChains.push_back({
+            labels,
+            std::move(firstArc),
+            true,
+            true,
+            startTangent,
+            splitTangent,
+        });
+        outChains.push_back({
+            labels,
+            std::move(secondArc),
+            true,
+            true,
+            splitTangent,
+            startTangent,
+        });
     }
+}
+
+Eigen::Vector3d forwardTangentAt(
+    std::span<const segmesh::Float3> points,
+    std::size_t index
+)
+{
+    Eigen::Vector3d tangent;
+    if (index == 0)
+    {
+        tangent = toEigen(points[1]) - toEigen(points[0]);
+    }
+    else if (index + 1 == points.size())
+    {
+        tangent = toEigen(points[index]) - toEigen(points[index - 1]);
+    }
+    else
+    {
+        const Eigen::Vector3d incoming = (
+            toEigen(points[index]) - toEigen(points[index - 1])
+        ).normalized();
+        const Eigen::Vector3d outgoing = (
+            toEigen(points[index + 1]) - toEigen(points[index])
+        ).normalized();
+        tangent = incoming + outgoing;
+        if (tangent.squaredNorm() <= kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+        {
+            tangent = outgoing;
+        }
+    }
+    return tangent.normalized();
+}
+
+double pointToLineDistance(
+    const segmesh::Float3& point,
+    const segmesh::Float3& lineStart,
+    const segmesh::Float3& lineEnd
+)
+{
+    const Eigen::Vector3d start = toEigen(lineStart);
+    const Eigen::Vector3d direction = toEigen(lineEnd) - start;
+    const double squaredLength = direction.squaredNorm();
+    if (squaredLength <= kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+    {
+        return (toEigen(point) - start).norm();
+    }
+    return ((toEigen(point) - start).cross(direction)).norm() / std::sqrt(squaredLength);
+}
+
+double pointToSegmentDistance(
+    const segmesh::Float3& point,
+    const segmesh::Float3& segmentStart,
+    const segmesh::Float3& segmentEnd
+)
+{
+    const Eigen::Vector3d start = toEigen(segmentStart);
+    const Eigen::Vector3d direction = toEigen(segmentEnd) - start;
+    const double squaredLength = direction.squaredNorm();
+    if (squaredLength <= kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+    {
+        return (toEigen(point) - start).norm();
+    }
+    const double parameter = std::clamp(
+        (toEigen(point) - start).dot(direction) / squaredLength,
+        0.0,
+        1.0
+    );
+    return (toEigen(point) - (start + parameter * direction)).norm();
+}
+
+double cubicFlatness(const std::array<segmesh::Float3, 4>& cubic)
+{
+    const double perpendicularDeviation = std::max(
+        pointToLineDistance(cubic[1], cubic[0], cubic[3]),
+        pointToLineDistance(cubic[2], cubic[0], cubic[3])
+    );
+    const double controlPolygonLength = pointDistance(cubic[0], cubic[1])
+        + pointDistance(cubic[1], cubic[2])
+        + pointDistance(cubic[2], cubic[3]);
+    const double chordLength = pointDistance(cubic[0], cubic[3]);
+    return std::max(perpendicularDeviation, controlPolygonLength - chordLength);
+}
+
+void splitCubicAtHalf(
+    const std::array<segmesh::Float3, 4>& cubic,
+    std::array<segmesh::Float3, 4>& left,
+    std::array<segmesh::Float3, 4>& right
+)
+{
+    const Eigen::Vector3d p0 = toEigen(cubic[0]);
+    const Eigen::Vector3d p1 = toEigen(cubic[1]);
+    const Eigen::Vector3d p2 = toEigen(cubic[2]);
+    const Eigen::Vector3d p3 = toEigen(cubic[3]);
+    const Eigen::Vector3d p01 = (p0 + p1) * 0.5;
+    const Eigen::Vector3d p12 = (p1 + p2) * 0.5;
+    const Eigen::Vector3d p23 = (p2 + p3) * 0.5;
+    const Eigen::Vector3d p012 = (p01 + p12) * 0.5;
+    const Eigen::Vector3d p123 = (p12 + p23) * 0.5;
+    const Eigen::Vector3d midpoint = (p012 + p123) * 0.5;
+    left = {cubic[0], toFloat3(p01), toFloat3(p012), toFloat3(midpoint)};
+    right = {toFloat3(midpoint), toFloat3(p123), toFloat3(p23), cubic[3]};
+}
+
+void sampleCubicForFit(
+    const std::array<segmesh::Float3, 4>& cubic,
+    double samplingTolerance,
+    uint32_t depth,
+    std::vector<segmesh::Float3>& outPoints
+)
+{
+    if ((depth >= kMinimumFitSamplingDepth && cubicFlatness(cubic) <= samplingTolerance)
+        || depth == kMaximumDrawingSubdivisionDepth)
+    {
+        outPoints.push_back(cubic.back());
+        return;
+    }
+
+    std::array<segmesh::Float3, 4> left{};
+    std::array<segmesh::Float3, 4> right{};
+    splitCubicAtHalf(cubic, left, right);
+    sampleCubicForFit(left, samplingTolerance, depth + 1, outPoints);
+    sampleCubicForFit(right, samplingTolerance, depth + 1, outPoints);
+}
+
+double curveToPolylineDeviation(
+    const std::array<segmesh::Float3, 4>& cubic,
+    std::span<const segmesh::Float3> polyline,
+    double fitTolerance,
+    std::size_t& outSplitPoint
+)
+{
+    std::vector<segmesh::Float3> curveSamples;
+    curveSamples.reserve(65);
+    curveSamples.push_back(cubic.front());
+    const double chordLength = pointDistance(cubic.front(), cubic.back());
+    const double samplingTolerance = std::max(
+        std::min(fitTolerance * 0.125, chordLength * 1.0e-3),
+        kCoincidentPointEpsilon
+    );
+    sampleCubicForFit(cubic, samplingTolerance, 0, curveSamples);
+
+    double maximumDistance = 0.0;
+    std::size_t nearestSegmentAtMaximum = 0;
+    for (const segmesh::Float3& curvePoint : curveSamples)
+    {
+        double nearestDistance = std::numeric_limits<double>::infinity();
+        std::size_t nearestSegment = 0;
+        for (std::size_t segment = 0; segment + 1 < polyline.size(); ++segment)
+        {
+            const double distance = pointToSegmentDistance(
+                curvePoint,
+                polyline[segment],
+                polyline[segment + 1]
+            );
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearestSegment = segment;
+            }
+        }
+        if (nearestDistance > maximumDistance)
+        {
+            maximumDistance = nearestDistance;
+            nearestSegmentAtMaximum = nearestSegment;
+        }
+    }
+
+    if (polyline.size() > 2)
+    {
+        outSplitPoint = std::clamp(
+            nearestSegmentAtMaximum + 1,
+            std::size_t{1},
+            polyline.size() - 2
+        );
+    }
+    else
+    {
+        outSplitPoint = 0;
+    }
+    return maximumDistance;
+}
+
+std::array<segmesh::Float3, 4> tangentCubicForSegment(
+    const segmesh::Float3& first,
+    const segmesh::Float3& last,
+    Eigen::Vector3d startTangent,
+    Eigen::Vector3d endTangent,
+    double handleLength
+)
+{
+    const Eigen::Vector3d start = toEigen(first);
+    const Eigen::Vector3d end = toEigen(last);
+    const Eigen::Vector3d chord = end - start;
+    const Eigen::Vector3d chordDirection = chord.normalized();
+    if (!startTangent.allFinite() || startTangent.dot(chordDirection) <= 0.0)
+    {
+        startTangent = chordDirection;
+    }
+    if (!endTangent.allFinite() || endTangent.dot(chordDirection) <= 0.0)
+    {
+        endTangent = chordDirection;
+    }
+    return {
+        first,
+        toFloat3(start + handleLength * startTangent.normalized()),
+        toFloat3(end - handleLength * endTangent.normalized()),
+        last,
+    };
+}
+
+bool fitCubicWithTangents(
+    std::span<const segmesh::Float3> points,
+    const Eigen::Vector3d& startTangent,
+    const Eigen::Vector3d& endTangent,
+    std::array<segmesh::Float3, 4>& outControlPoints,
+    segmesh::BorderCurveFitStats& outStats,
+    std::size_t& outWorstPoint,
+    std::string& error
+)
+{
+    outControlPoints = {};
+    outStats = {};
+    outWorstPoint = 0;
+
+    if (points.size() < 2)
+    {
+        error = "Bezier fitting requires at least two sample points.";
+        return false;
+    }
+    if (!std::all_of(points.begin(), points.end(), isFinite)
+        || !startTangent.allFinite() || !endTangent.allFinite())
+    {
+        error = "Bezier fitting received non-finite input.";
+        return false;
+    }
+    if (points.size() == 2)
+    {
+        const double chordLength = pointDistance(points.front(), points.back());
+        outControlPoints = tangentCubicForSegment(
+            points.front(), points.back(), startTangent, endTangent, chordLength / 3.0
+        );
+        return true;
+    }
+
+    const std::vector<double> parameters = chordLengthParameters(points);
+    const Eigen::Vector3d first = toEigen(points.front());
+    const Eigen::Vector3d last = toEigen(points.back());
+    const double chordLength = pointDistance(points.front(), points.back());
+
+    const Eigen::Index rowCount = static_cast<Eigen::Index>((points.size() - 2) * 3);
+    Eigen::MatrixXd design(rowCount, 2);
+    Eigen::VectorXd rightHandSide(rowCount);
+    for (std::size_t index = 1; index + 1 < points.size(); ++index)
+    {
+        const double t = parameters[index];
+        const double oneMinusT = 1.0 - t;
+        const double b0 = oneMinusT * oneMinusT * oneMinusT;
+        const double b1 = 3.0 * oneMinusT * oneMinusT * t;
+        const double b2 = 3.0 * oneMinusT * t * t;
+        const double b3 = t * t * t;
+        const Eigen::Index row = static_cast<Eigen::Index>((index - 1) * 3);
+        design.block<3, 1>(row, 0) = b1 * startTangent;
+        design.block<3, 1>(row, 1) = -b2 * endTangent;
+        rightHandSide.segment<3>(row) = toEigen(points[index])
+            - (b0 + b1) * first - (b2 + b3) * last;
+    }
+
+    const double fallbackHandle = chordLength / 3.0;
+    double startHandle = fallbackHandle;
+    double endHandle = fallbackHandle;
+    Eigen::ColPivHouseholderQR<Eigen::MatrixXd> solver(design);
+    const Eigen::VectorXd solution = solver.solve(rightHandSide);
+    if (solver.rank() == 2 && solution.allFinite())
+    {
+        const double minimumHandle = std::max(chordLength * 1.0e-6, kCoincidentPointEpsilon);
+        const double maximumHandle = std::max(chordLength, minimumHandle);
+        if (solution[0] >= minimumHandle && solution[0] <= maximumHandle
+            && solution[1] >= minimumHandle && solution[1] <= maximumHandle)
+        {
+            startHandle = solution[0];
+            endHandle = solution[1];
+        }
+    }
+
+    outControlPoints = {
+        points.front(),
+        toFloat3(first + startHandle * startTangent),
+        toFloat3(last - endHandle * endTangent),
+        points.back(),
+    };
+    if (!std::all_of(outControlPoints.begin(), outControlPoints.end(), isFinite))
+    {
+        outControlPoints = {};
+        error = "Bezier fitting produced non-finite control points.";
+        return false;
+    }
+
+    const std::span<const segmesh::Float3> cubic(outControlPoints);
+    double squaredErrorSum = 0.0;
+    for (std::size_t index = 0; index < points.size(); ++index)
+    {
+        const double fitError = pointDistance(
+            points[index],
+            segmesh::evaluateBezier(cubic, parameters[index])
+        );
+        if (!std::isfinite(fitError))
+        {
+            outControlPoints = {};
+            outStats = {};
+            error = "Bezier fitting produced a non-finite residual.";
+            return false;
+        }
+        if (fitError > outStats.maxError)
+        {
+            outStats.maxError = fitError;
+            outWorstPoint = index;
+        }
+        squaredErrorSum += fitError * fitError;
+    }
+    outStats.rmsError = std::sqrt(squaredErrorSum / static_cast<double>(points.size()));
+    return true;
+}
+
+bool fitAdaptiveCubicPieces(
+    std::span<const segmesh::Float3> points,
+    double fitTolerance,
+    const Eigen::Vector3d& chainStartTangent,
+    const Eigen::Vector3d& chainEndTangent,
+    std::vector<CubicPiece>& outPieces,
+    std::string& error
+)
+{
+    struct PendingPiece
+    {
+        std::size_t first = 0;
+        std::size_t last = 0;
+        Eigen::Vector3d startTangent{};
+        Eigen::Vector3d endTangent{};
+    };
+
+    std::vector<PendingPiece> pending;
+    pending.push_back({
+        0,
+        points.size() - 1,
+        chainStartTangent,
+        chainEndTangent,
+    });
+
+    while (!pending.empty())
+    {
+        PendingPiece current = pending.back();
+        pending.pop_back();
+        const std::span<const segmesh::Float3> piecePoints = points.subspan(
+            current.first,
+            current.last - current.first + 1
+        );
+
+        CubicPiece fitted;
+        fitted.firstSample = current.first;
+        fitted.lastSample = current.last;
+        std::size_t worstLocalPoint = 0;
+        if (!fitCubicWithTangents(
+                piecePoints,
+                current.startTangent,
+                current.endTangent,
+                fitted.controlPoints,
+                fitted.fitStats,
+                worstLocalPoint,
+                error))
+        {
+            return false;
+        }
+
+        std::size_t geometricSplitPoint = 0;
+        double geometricDeviation = curveToPolylineDeviation(
+            fitted.controlPoints,
+            piecePoints,
+            fitTolerance,
+            geometricSplitPoint
+        );
+
+        if (piecePoints.size() == 2)
+        {
+            const double chordLength = pointDistance(piecePoints.front(), piecePoints.back());
+            double handleLength = chordLength / 3.0;
+            for (uint32_t attempt = 0;
+                 geometricDeviation > fitTolerance && attempt < 24;
+                 ++attempt)
+            {
+                handleLength *= 0.5;
+                fitted.controlPoints = tangentCubicForSegment(
+                    piecePoints.front(),
+                    piecePoints.back(),
+                    current.startTangent,
+                    current.endTangent,
+                    handleLength
+                );
+                geometricDeviation = curveToPolylineDeviation(
+                    fitted.controlPoints,
+                    piecePoints,
+                    fitTolerance,
+                    geometricSplitPoint
+                );
+            }
+            if (geometricDeviation > fitTolerance)
+            {
+                fitted.controlPoints = lineEquivalentCubic(
+                    piecePoints.front(), piecePoints.back()
+                );
+                geometricDeviation = 0.0;
+            }
+            fitted.fitStats.maxError = std::max(
+                fitted.fitStats.maxError,
+                geometricDeviation
+            );
+            outPieces.push_back(std::move(fitted));
+            continue;
+        }
+
+        if (geometricDeviation > fitted.fitStats.maxError)
+        {
+            fitted.fitStats.maxError = geometricDeviation;
+            worstLocalPoint = geometricSplitPoint;
+        }
+
+        if (fitted.fitStats.maxError <= fitTolerance)
+        {
+            outPieces.push_back(std::move(fitted));
+            continue;
+        }
+
+        if (worstLocalPoint == 0 || worstLocalPoint + 1 == piecePoints.size())
+        {
+            worstLocalPoint = piecePoints.size() / 2;
+        }
+        const std::size_t split = current.first + worstLocalPoint;
+        const Eigen::Vector3d splitTangent = forwardTangentAt(points, split);
+
+        // Push right first so the LIFO traversal emits pieces in chain order.
+        pending.push_back({split, current.last, splitTangent, current.endTangent});
+        pending.push_back({current.first, split, current.startTangent, splitTangent});
+    }
+    return true;
+}
+
+void flattenCubicRecursive(
+    const std::array<segmesh::Float3, 4>& cubic,
+    double tolerance,
+    uint32_t depth,
+    std::vector<segmesh::Float3>& outPoints,
+    bool& outSubdivisionCapped
+)
+{
+    const double flatness = cubicFlatness(cubic);
+    if (flatness <= tolerance || depth == kMaximumDrawingSubdivisionDepth)
+    {
+        if (flatness > tolerance)
+        {
+            outSubdivisionCapped = true;
+        }
+        outPoints.push_back(cubic.back());
+        return;
+    }
+
+    std::array<segmesh::Float3, 4> left{};
+    std::array<segmesh::Float3, 4> right{};
+    splitCubicAtHalf(cubic, left, right);
+    flattenCubicRecursive(left, tolerance, depth + 1, outPoints, outSubdivisionCapped);
+    flattenCubicRecursive(right, tolerance, depth + 1, outPoints, outSubdivisionCapped);
+}
+
+std::vector<segmesh::Float3> flattenCubic(
+    const std::array<segmesh::Float3, 4>& cubic,
+    double tolerance,
+    bool& outSubdivisionCapped
+)
+{
+    std::vector<segmesh::Float3> points;
+    points.push_back(cubic.front());
+    flattenCubicRecursive(cubic, tolerance, 0, points, outSubdivisionCapped);
+    return points;
 }
 
 bool appendPolyline(
@@ -512,28 +1046,6 @@ Float3 evaluateBezier(std::span<const Float3> controlPoints, double t)
     return toFloat3(work.front());
 }
 
-std::vector<Float3> elevateBezierDegree(std::span<const Float3> controlPoints)
-{
-    if (controlPoints.empty())
-    {
-        return {};
-    }
-
-    const std::size_t oldDegree = controlPoints.size() - 1;
-    const std::size_t newDegree = oldDegree + 1;
-    std::vector<Float3> elevated(controlPoints.size() + 1);
-    elevated.front() = controlPoints.front();
-    elevated.back() = controlPoints.back();
-    for (std::size_t index = 1; index <= oldDegree; ++index)
-    {
-        const double previousWeight = static_cast<double>(index) / static_cast<double>(newDegree);
-        const Eigen::Vector3d point = previousWeight * toEigen(controlPoints[index - 1])
-            + (1.0 - previousWeight) * toEigen(controlPoints[index]);
-        elevated[index] = toFloat3(point);
-    }
-    return elevated;
-}
-
 bool fitEndpointConstrainedCubic(
     std::span<const Float3> points,
     std::array<Float3, 4>& outControlPoints,
@@ -561,120 +1073,16 @@ bool fitEndpointConstrainedCubic(
         return false;
     }
 
-    const std::vector<double> parameters = chordLengthParameters(samples);
-    if (samples.size() == 2)
-    {
-        outControlPoints = lineEquivalentCubic(samples.front(), samples.back());
-    }
-    else if (samples.size() == 3)
-    {
-        const double t = parameters[1];
-        const double oneMinusT = 1.0 - t;
-        const double denominator = 2.0 * oneMinusT * t;
-        if (denominator <= std::numeric_limits<double>::epsilon())
-        {
-            outControlPoints = lineEquivalentCubic(samples.front(), samples.back());
-        }
-        else
-        {
-            const Eigen::Vector3d quadraticMiddle = (
-                toEigen(samples[1])
-                - oneMinusT * oneMinusT * toEigen(samples.front())
-                - t * t * toEigen(samples.back())
-            ) / denominator;
-            outControlPoints = {
-                samples.front(),
-                toFloat3(toEigen(samples.front()) / 3.0 + quadraticMiddle * (2.0 / 3.0)),
-                toFloat3(quadraticMiddle * (2.0 / 3.0) + toEigen(samples.back()) / 3.0),
-                samples.back(),
-            };
-        }
-    }
-    else
-    {
-        Eigen::MatrixXd design(static_cast<Eigen::Index>(samples.size() - 2), 2);
-        Eigen::MatrixXd rightHandSide(static_cast<Eigen::Index>(samples.size() - 2), 3);
-        const Eigen::Vector3d first = toEigen(samples.front());
-        const Eigen::Vector3d last = toEigen(samples.back());
-
-        for (std::size_t index = 1; index + 1 < samples.size(); ++index)
-        {
-            const double t = parameters[index];
-            const double oneMinusT = 1.0 - t;
-            const double b0 = oneMinusT * oneMinusT * oneMinusT;
-            const double b1 = 3.0 * oneMinusT * oneMinusT * t;
-            const double b2 = 3.0 * oneMinusT * t * t;
-            const double b3 = t * t * t;
-            const Eigen::Index row = static_cast<Eigen::Index>(index - 1);
-            design(row, 0) = b1;
-            design(row, 1) = b2;
-            rightHandSide.row(row) = (toEigen(samples[index]) - b0 * first - b3 * last).transpose();
-        }
-
-        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> solver(design);
-        const Eigen::MatrixXd solution = solver.solve(rightHandSide);
-        if (solver.rank() < 2 || !solution.allFinite())
-        {
-            outControlPoints = lineEquivalentCubic(samples.front(), samples.back());
-        }
-        else
-        {
-            outControlPoints = {
-                samples.front(),
-                toFloat3(solution.row(0).transpose()),
-                toFloat3(solution.row(1).transpose()),
-                samples.back(),
-            };
-        }
-    }
-
-    if (!std::all_of(outControlPoints.begin(), outControlPoints.end(), isFinite))
-    {
-        outControlPoints = {};
-        error = "Bezier fitting produced non-finite control points.";
-        return false;
-    }
-
-    double squaredErrorSum = 0.0;
-    const std::span<const Float3> cubic(outControlPoints);
-    for (std::size_t index = 0; index < samples.size(); ++index)
-    {
-        const double fitError = pointDistance(samples[index], evaluateBezier(cubic, parameters[index]));
-        if (!std::isfinite(fitError))
-        {
-            outControlPoints = {};
-            outStats = {};
-            error = "Bezier fitting produced a non-finite residual.";
-            return false;
-        }
-        outStats.maxError = std::max(outStats.maxError, fitError);
-        squaredErrorSum += fitError * fitError;
-    }
-    outStats.rmsError = std::sqrt(squaredErrorSum / static_cast<double>(samples.size()));
-    return true;
-}
-
-std::vector<Float3> adaptiveDegreeElevate(
-    const std::array<Float3, 4>& cubicControlPoints,
-    const BorderCurveSettings& settings,
-    bool& outDegreeCapped
-)
-{
-    const double tolerance = std::isfinite(settings.tolerance) && settings.tolerance >= 0.0
-        ? settings.tolerance
-        : BorderCurveSettings{}.tolerance;
-    const uint32_t maximumDegree = std::clamp(settings.maxDegree, 3u, kHardMaximumDegree);
-
-    std::vector<Float3> controlPoints(cubicControlPoints.begin(), cubicControlPoints.end());
-    double deviation = maximumControlPolygonDeviation(controlPoints, cubicControlPoints);
-    while (deviation > tolerance && controlPoints.size() - 1 < maximumDegree)
-    {
-        controlPoints = elevateBezierDegree(controlPoints);
-        deviation = maximumControlPolygonDeviation(controlPoints, cubicControlPoints);
-    }
-
-    outDegreeCapped = deviation > tolerance && controlPoints.size() - 1 >= maximumDegree;
-    return controlPoints;
+    std::size_t worstPoint = 0;
+    return fitCubicWithTangents(
+        samples,
+        forwardTangentAt(samples, 0),
+        forwardTangentAt(samples, samples.size() - 1),
+        outControlPoints,
+        outStats,
+        worstPoint,
+        error
+    );
 }
 
 bool buildSegmentBorderOverlay(
@@ -702,14 +1110,14 @@ bool buildSegmentBorderOverlay(
         error = "Mesh edge topology data is incomplete.";
         return false;
     }
-    if (!std::isfinite(settings.tolerance) || settings.tolerance < 0.0)
+    if (!std::isfinite(settings.fitTolerance) || settings.fitTolerance < 0.0)
     {
-        error = "Border-curve tolerance must be a finite non-negative value.";
+        error = "Border-curve fit tolerance must be a finite non-negative value.";
         return false;
     }
-    if (settings.maxDegree < 3 || settings.maxDegree > kHardMaximumDegree)
+    if (!std::isfinite(settings.drawingTolerance) || settings.drawingTolerance < 0.0)
     {
-        error = "Border-curve maximum degree must be between 3 and 64.";
+        error = "Border-curve drawing tolerance must be a finite non-negative value.";
         return false;
     }
 
@@ -830,38 +1238,111 @@ bool buildSegmentBorderOverlay(
             continue;
         }
 
-        std::array<Float3, 4> cubic{};
-        BorderCurveFitStats fitStats{};
-        if (!fitEndpointConstrainedCubic(fittedPoints, cubic, fitStats, error))
+        Eigen::Vector3d chainStartTangent = forwardTangentAt(fittedPoints, 0);
+        Eigen::Vector3d chainEndTangent = forwardTangentAt(
+            fittedPoints,
+            fittedPoints.size() - 1
+        );
+        if (chain.hasEndpointTangents
+            && chain.startTangent.allFinite()
+            && chain.endTangent.allFinite()
+            && chain.startTangent.squaredNorm()
+                > kCoincidentPointEpsilon * kCoincidentPointEpsilon
+            && chain.endTangent.squaredNorm()
+                > kCoincidentPointEpsilon * kCoincidentPointEpsilon)
+        {
+            chainStartTangent = chain.startTangent.normalized();
+            chainEndTangent = chain.endTangent.normalized();
+        }
+
+        std::vector<CubicPiece> pieces;
+        if (!fitAdaptiveCubicPieces(
+                fittedPoints,
+                settings.fitTolerance,
+                chainStartTangent,
+                chainEndTangent,
+                pieces,
+                error))
+        {
+            return false;
+        }
+        if (pieces.empty())
+        {
+            ++outOverlay.skippedChainCount;
+            continue;
+        }
+
+        std::vector<Float3> renderedPoints;
+        bool drawingSubdivisionCapped = false;
+        double chainMaximumFitError = 0.0;
+        double chainSquaredFitError = 0.0;
+        for (const CubicPiece& piece : pieces)
+        {
+            bool pieceSubdivisionCapped = false;
+            std::vector<Float3> flattened = flattenCubic(
+                piece.controlPoints,
+                settings.drawingTolerance,
+                pieceSubdivisionCapped
+            );
+            drawingSubdivisionCapped |= pieceSubdivisionCapped;
+            if (renderedPoints.empty())
+            {
+                renderedPoints = std::move(flattened);
+            }
+            else
+            {
+                renderedPoints.insert(renderedPoints.end(), flattened.begin() + 1, flattened.end());
+            }
+
+            if (!appendPolyline(
+                    piece.controlPoints,
+                    outOverlay.controlVertices,
+                    outOverlay.controlIndices,
+                    error))
+            {
+                return false;
+            }
+            chainMaximumFitError = std::max(
+                chainMaximumFitError,
+                piece.fitStats.maxError
+            );
+            const std::size_t piecePointCount = piece.lastSample - piece.firstSample + 1;
+            chainSquaredFitError += piece.fitStats.rmsError * piece.fitStats.rmsError
+                * static_cast<double>(piecePointCount);
+        }
+        if (!appendPolyline(renderedPoints, outOverlay.vertices, outOverlay.indices, error))
         {
             return false;
         }
 
-        bool degreeCapped = false;
-        const std::vector<Float3> elevated = adaptiveDegreeElevate(cubic, settings, degreeCapped);
-        if (!appendPolyline(elevated, outOverlay.vertices, outOverlay.indices, error)
-            || !appendPolyline(cubic, outOverlay.controlVertices, outOverlay.controlIndices, error))
+        if (pieces.size() > std::numeric_limits<uint32_t>::max()
+            || renderedPoints.size() > std::numeric_limits<uint32_t>::max()
+            || outOverlay.cubicPieceCount > std::numeric_limits<uint32_t>::max() - pieces.size())
         {
+            error = "The generated border overlay exceeds 32-bit statistics limits.";
             return false;
         }
-
-        if (degreeCapped)
+        outOverlay.cubicPieceCount += static_cast<uint32_t>(pieces.size());
+        if (drawingSubdivisionCapped)
         {
-            ++outOverlay.cappedChainCount;
+            ++outOverlay.drawingCappedChainCount;
         }
-        outOverlay.maxFitError = std::max(outOverlay.maxFitError, fitStats.maxError);
-        totalSquaredFitError += fitStats.rmsError * fitStats.rmsError
-            * static_cast<double>(fittedPoints.size());
+        outOverlay.maxFitError = std::max(outOverlay.maxFitError, chainMaximumFitError);
+        totalSquaredFitError += chainSquaredFitError;
         totalFittedPointCount += fittedPoints.size();
+        const double chainRmsFitError = std::sqrt(
+            chainSquaredFitError / static_cast<double>(fittedPoints.size())
+        );
         outOverlay.chains.push_back({
             chain.labels.first,
             chain.labels.second,
             static_cast<uint32_t>(sourcePoints.size()),
             static_cast<uint32_t>(fittedPoints.size()),
-            static_cast<uint32_t>(elevated.size() - 1),
-            fitStats.maxError,
-            fitStats.rmsError,
-            degreeCapped,
+            static_cast<uint32_t>(pieces.size()),
+            static_cast<uint32_t>(renderedPoints.size()),
+            chainMaximumFitError,
+            chainRmsFitError,
+            drawingSubdivisionCapped,
             chain.closedLoopArc,
         });
     }

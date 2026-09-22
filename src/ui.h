@@ -41,7 +41,8 @@ struct RendererUiState
     bool showSegmentation = false;
     bool showSegmentBorders = true;
     SegmentBorderDisplayMode segmentBorderDisplayMode = SegmentBorderDisplayMode::Both;
-    float borderDegreeElevationTolerance = 0.002f;
+    float borderCurveFitTolerance = 0.01f;
+    float borderCurveDrawingTolerance = 0.1f;
     bool showBezierControlPolygon = false;
     bool automaticSegmentation = false;
     SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;

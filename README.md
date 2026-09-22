@@ -157,3 +157,15 @@ This project was made for a course at BME. The Hungarian report is here:
 
 Possible future preprocessing reference:
 [meshoptimizer](https://github.com/zeux/meshoptimizer)
+
+
+
+#TODO
+B-spline
+segment merge by hand
+color triangle side by segment weight
+load preset model
+better seed placement
+![](image.png) debug
+control point
+fokszám variable and max 3 or 4th

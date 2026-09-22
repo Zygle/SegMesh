@@ -98,14 +98,24 @@ RendererUiActions drawRendererPanel(
         if (uiState.segmentBorderDisplayMode != SegmentBorderDisplayMode::Original)
         {
             ImGui::SliderFloat(
-                "Elevation tolerance",
-                &uiState.borderDegreeElevationTolerance,
-                0.0001f,
-                0.02f,
-                "%.4f"
+                "Fit tolerance",
+                &uiState.borderCurveFitTolerance,
+                0.001f,
+                0.05f,
+                "%.4f",
+                ImGuiSliderFlags_Logarithmic
             );
-            ImGui::Checkbox("Show cubic control polygon", &uiState.showBezierControlPolygon);
-            ImGui::TextUnformatted("Cyan: smoothed border. Orange: cubic control polygon.");
+            ImGui::SliderFloat(
+                "Drawing tolerance",
+                &uiState.borderCurveDrawingTolerance,
+                0.0001f,
+                0.01f,
+                "%.4f",
+                ImGuiSliderFlags_Logarithmic
+            );
+            ImGui::Checkbox("Show B\xC3\xA9zier control polygons", &uiState.showBezierControlPolygon);
+            ImGui::TextUnformatted("Cyan: piecewise cubic B\xC3\xA9zier border.");
+            ImGui::TextUnformatted("Orange: cubic control polygons.");
         }
     }
     int segmentationModel = static_cast<int>(uiState.segmentationModelType);

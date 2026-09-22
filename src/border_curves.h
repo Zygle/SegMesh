@@ -12,8 +12,8 @@ namespace segmesh
 {
 struct BorderCurveSettings
 {
-    double tolerance = 0.002;
-    uint32_t maxDegree = 64;
+    double fitTolerance = 0.01;
+    double drawingTolerance = 0.001;
 };
 
 struct BorderCurveFitStats
@@ -28,10 +28,11 @@ struct BorderCurveChainStats
     uint32_t secondLabel = 0;
     uint32_t sourcePointCount = 0;
     uint32_t fittedPointCount = 0;
-    uint32_t finalDegree = 0;
+    uint32_t cubicPieceCount = 0;
+    uint32_t renderedPointCount = 0;
     double maxFitError = 0.0;
     double rmsFitError = 0.0;
-    bool degreeCapped = false;
+    bool drawingSubdivisionCapped = false;
     bool closedLoopArc = false;
 };
 
@@ -45,26 +46,19 @@ struct BorderCurveOverlay
 
     uint32_t boundaryEdgeCount = 0;
     uint32_t skippedChainCount = 0;
-    uint32_t cappedChainCount = 0;
+    uint32_t cubicPieceCount = 0;
+    uint32_t drawingCappedChainCount = 0;
     double maxFitError = 0.0;
     double rmsFitError = 0.0;
 };
 
 Float3 evaluateBezier(std::span<const Float3> controlPoints, double t);
 
-std::vector<Float3> elevateBezierDegree(std::span<const Float3> controlPoints);
-
 bool fitEndpointConstrainedCubic(
     std::span<const Float3> points,
     std::array<Float3, 4>& outControlPoints,
     BorderCurveFitStats& outStats,
     std::string& error
-);
-
-std::vector<Float3> adaptiveDegreeElevate(
-    const std::array<Float3, 4>& cubicControlPoints,
-    const BorderCurveSettings& settings,
-    bool& outDegreeCapped
 );
 
 bool buildSegmentBorderOverlay(

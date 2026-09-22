@@ -653,7 +653,8 @@ bool refreshSegmentationPreview(
     }
 
     segmesh::BorderCurveSettings borderCurveSettings{};
-    borderCurveSettings.tolerance = static_cast<double>(uiState.borderDegreeElevationTolerance);
+    borderCurveSettings.fitTolerance = static_cast<double>(uiState.borderCurveFitTolerance);
+    borderCurveSettings.drawingTolerance = static_cast<double>(uiState.borderCurveDrawingTolerance);
 
     segmesh::BorderCurveOverlay borderCurveOverlay;
     if (!segmesh::buildSegmentBorderOverlay(
@@ -922,7 +923,8 @@ int main(int argc, char** argv)
         const float previousMergeCostThreshold = uiState.mergeCostThreshold;
         const bool previousCleanupSmallFineSegments = uiState.cleanupSmallFineSegments;
         const int previousMinFineSegmentTriangles = uiState.minFineSegmentTriangles;
-        const float previousBorderDegreeElevationTolerance = uiState.borderDegreeElevationTolerance;
+        const float previousBorderCurveFitTolerance = uiState.borderCurveFitTolerance;
+        const float previousBorderCurveDrawingTolerance = uiState.borderCurveDrawingTolerance;
         const std::vector<uint32_t>& seedsBeforeUi =
             activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
@@ -983,7 +985,8 @@ int main(int argc, char** argv)
             || uiState.cleanupSmallFineSegments != previousCleanupSmallFineSegments
             || uiState.minFineSegmentTriangles != previousMinFineSegmentTriangles;
         const bool borderCurveSettingsChanged =
-            uiState.borderDegreeElevationTolerance != previousBorderDegreeElevationTolerance;
+            uiState.borderCurveFitTolerance != previousBorderCurveFitTolerance
+            || uiState.borderCurveDrawingTolerance != previousBorderCurveDrawingTolerance;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)
