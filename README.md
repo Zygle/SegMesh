@@ -162,7 +162,6 @@ Possible future preprocessing reference:
 
 #TODO
 B-spline
-segment merge by hand
 color triangle side by segment weight
 load preset model
 better seed placement

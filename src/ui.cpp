@@ -12,6 +12,9 @@ RendererUiActions drawRendererPanel(
     uint32_t vertexCount,
     uint32_t triangleCount,
     uint32_t seedTriangleCount,
+    bool hasSegmentationPreview,
+    int32_t selectedMergeSegment,
+    uint32_t manualMergeCount,
     const char* rendererName,
     RendererUiState& uiState
 )
@@ -204,7 +207,50 @@ RendererUiActions drawRendererPanel(
         ImGui::TextUnformatted("Add at least one seed triangle to solve the segmentation.");
     }
     ImGui::Separator();
-    ImGui::BeginDisabled(uiState.automaticSegmentation);
+    if (!hasSegmentationPreview)
+    {
+        uiState.manualSegmentMerge = false;
+    }
+    ImGui::BeginDisabled(!hasSegmentationPreview);
+    ImGui::Checkbox("Manual segment merge", &uiState.manualSegmentMerge);
+    ImGui::EndDisabled();
+    if (uiState.manualSegmentMerge)
+    {
+        ImGui::TextWrapped("Right-click a source segment, then right-click a neighboring target segment.");
+        if (selectedMergeSegment >= 0)
+        {
+            ImGui::Text("Selected source: %d", selectedMergeSegment);
+        }
+        else
+        {
+            ImGui::TextUnformatted("Selected source: none");
+        }
+
+        ImGui::BeginDisabled(selectedMergeSegment < 0);
+        if (ImGui::Button("Cancel selection"))
+        {
+            actions.requestCancelMergeSelection = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(manualMergeCount == 0);
+        if (ImGui::Button("Undo merge"))
+        {
+            actions.requestUndoManualMerge = true;
+        }
+        ImGui::EndDisabled();
+
+        ImGui::BeginDisabled(manualMergeCount == 0);
+        if (ImGui::Button("Reset manual merges"))
+        {
+            actions.requestResetManualMerges = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::Text("Manual merge count: %u", manualMergeCount);
+    }
+
+    ImGui::Separator();
+    ImGui::BeginDisabled(uiState.automaticSegmentation || uiState.manualSegmentMerge);
     if (ImGui::Button("Place random seed"))
     {
         actions.requestRandomSeed = true;
@@ -219,6 +265,10 @@ RendererUiActions drawRendererPanel(
     if (uiState.automaticSegmentation)
     {
         ImGui::TextUnformatted("Manual seed placement is disabled while automatic mode is enabled.");
+    }
+    else if (uiState.manualSegmentMerge)
+    {
+        ImGui::TextUnformatted("Seed placement is disabled while manual merge mode is enabled.");
     }
     ImGui::End();
 

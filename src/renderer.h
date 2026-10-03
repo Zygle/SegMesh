@@ -30,8 +30,15 @@ public:
         uint32_t groupCount,
         std::string& error
     );
+    bool setHighlightedSegment(
+        const CpuMesh& mesh,
+        const std::vector<uint32_t>& triangleGroups,
+        uint32_t groupIndex,
+        std::string& error
+    );
     bool setSegmentBorderOverlay(const BorderCurveOverlay& overlay, std::string& error);
     void clearSeedTriangle();
+    void clearHighlightedSegment();
     void clearTriangleGroups();
     void clearSegmentBorderOverlay();
     void resize(uint32_t width, uint32_t height);
@@ -62,6 +69,8 @@ private:
     bgfx::UniformHandle uMaterial_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uDrawParams_ = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle seedTriangleIbh_ = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle highlightedSegmentIbh_ = BGFX_INVALID_HANDLE;
+    uint32_t highlightedSegmentIndexCount_ = 0;
     bgfx::IndexBufferHandle segmentBorderIbh_ = BGFX_INVALID_HANDLE;
     uint32_t segmentBorderIndexCount_ = 0;
     GpuMesh smoothedBorderMesh_{};

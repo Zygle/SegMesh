@@ -41,6 +41,14 @@ bool mergeSmallSegmentsByTriangleCount(
     std::string& error
 );
 
+bool mergeAdjacentSegmentsByTriangles(
+    const CpuMesh& mesh,
+    uint32_t sourceTriangle,
+    uint32_t targetTriangle,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+);
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,

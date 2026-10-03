@@ -1288,6 +1288,91 @@ bool mergeSmallSegmentsByTriangleCount(
     return true;
 }
 
+bool mergeAdjacentSegmentsByTriangles(
+    const CpuMesh& mesh,
+    uint32_t sourceTriangle,
+    uint32_t targetTriangle,
+    std::vector<uint32_t>& inOutTriangleLabels,
+    std::string& error
+)
+{
+    error.clear();
+
+    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (faceCount == 0)
+    {
+        error = "Cannot merge segments on an empty mesh.";
+        return false;
+    }
+    if (mesh.faceAdjacency.size() != faceCount)
+    {
+        error = "Mesh adjacency data is incomplete.";
+        return false;
+    }
+    if (inOutTriangleLabels.size() != faceCount)
+    {
+        error = "Segment label count does not match the face count.";
+        return false;
+    }
+    if (sourceTriangle >= faceCount || targetTriangle >= faceCount)
+    {
+        error = "Selected triangle index is out of range.";
+        return false;
+    }
+
+    const uint32_t sourceLabel = inOutTriangleLabels[static_cast<std::size_t>(sourceTriangle)];
+    const uint32_t targetLabel = inOutTriangleLabels[static_cast<std::size_t>(targetTriangle)];
+    if (sourceLabel == targetLabel)
+    {
+        error = "Select a different neighboring segment.";
+        return false;
+    }
+
+    bool adjacent = false;
+    for (uint32_t faceIndex = 0; faceIndex < faceCount && !adjacent; ++faceIndex)
+    {
+        if (inOutTriangleLabels[static_cast<std::size_t>(faceIndex)] != sourceLabel)
+        {
+            continue;
+        }
+
+        const FaceAdjacency& faceAdjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
+        for (const int32_t signedNeighbor : faceAdjacency.neighbors)
+        {
+            if (signedNeighbor < 0)
+            {
+                continue;
+            }
+            const uint32_t neighbor = static_cast<uint32_t>(signedNeighbor);
+            if (neighbor >= faceCount)
+            {
+                error = "Mesh adjacency contains an out-of-range neighboring face.";
+                return false;
+            }
+            if (inOutTriangleLabels[static_cast<std::size_t>(neighbor)] == targetLabel)
+            {
+                adjacent = true;
+                break;
+            }
+        }
+    }
+
+    if (!adjacent)
+    {
+        error = "The selected segments are not neighbors.";
+        return false;
+    }
+
+    for (uint32_t& label : inOutTriangleLabels)
+    {
+        if (label == sourceLabel)
+        {
+            label = targetLabel;
+        }
+    }
+    return true;
+}
+
 bool segmentMeshRandomWalk(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,

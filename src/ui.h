@@ -56,6 +56,7 @@ struct RendererUiState
     float mergeCostThreshold = 0.5f;
     bool cleanupSmallFineSegments = true;
     int minFineSegmentTriangles = 24;
+    bool manualSegmentMerge = false;
 
     std::string modelLoadError;
 };
@@ -68,6 +69,9 @@ struct RendererUiActions
     bool requestAutomaticStep = false;
     bool requestAutomaticStepReset = false;
     bool requestAutomaticStepFinish = false;
+    bool requestCancelMergeSelection = false;
+    bool requestUndoManualMerge = false;
+    bool requestResetManualMerges = false;
 };
 
 RendererUiActions drawRendererPanel(
@@ -77,6 +81,9 @@ RendererUiActions drawRendererPanel(
     uint32_t vertexCount,
     uint32_t triangleCount,
     uint32_t seedTriangleCount,
+    bool hasSegmentationPreview,
+    int32_t selectedMergeSegment,
+    uint32_t manualMergeCount,
     const char* rendererName,
     RendererUiState& uiState
 );

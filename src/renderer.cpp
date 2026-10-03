@@ -460,6 +460,7 @@ bool Renderer::loadMesh(const CpuMesh& mesh, std::string& error)
     gpuMesh_ = newMesh;
     clearTriangleGroups();
     clearSeedTriangle();
+    clearHighlightedSegment();
     return true;
 }
 
@@ -609,6 +610,63 @@ bool Renderer::setTriangleGroups(
     return true;
 }
 
+bool Renderer::setHighlightedSegment(
+    const CpuMesh& mesh,
+    const std::vector<uint32_t>& triangleGroups,
+    uint32_t groupIndex,
+    std::string& error
+)
+{
+    if (!initialized_ || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
+    {
+        error = "Renderer mesh must be loaded before highlighting a segment.";
+        return false;
+    }
+
+    const uint32_t triangleCount = static_cast<uint32_t>(mesh.indices.size() / 3);
+    if (triangleGroups.size() != triangleCount)
+    {
+        error = "Triangle group assignment size does not match the triangle count.";
+        return false;
+    }
+
+    std::vector<uint32_t> highlightedIndices;
+    for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+    {
+        if (triangleGroups[static_cast<std::size_t>(triangleIndex)] != groupIndex)
+        {
+            continue;
+        }
+
+        const uint32_t indexOffset = triangleIndex * 3;
+        highlightedIndices.push_back(mesh.indices[indexOffset + 0]);
+        highlightedIndices.push_back(mesh.indices[indexOffset + 1]);
+        highlightedIndices.push_back(mesh.indices[indexOffset + 2]);
+    }
+
+    if (highlightedIndices.empty())
+    {
+        error = "The selected segment contains no triangles.";
+        return false;
+    }
+
+    const bgfx::Memory* imem = bgfx::copy(
+        highlightedIndices.data(),
+        static_cast<uint32_t>(highlightedIndices.size() * sizeof(uint32_t))
+    );
+    const bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(imem, BGFX_BUFFER_INDEX32);
+    if (!bgfx::isValid(ibh))
+    {
+        error = "Failed to create the selected-segment index buffer.";
+        return false;
+    }
+
+    clearHighlightedSegment();
+    highlightedSegmentIbh_ = ibh;
+    highlightedSegmentIndexCount_ = static_cast<uint32_t>(highlightedIndices.size());
+    return true;
+}
+
 bool Renderer::setSegmentBorderOverlay(const BorderCurveOverlay& overlay, std::string& error)
 {
     if (!initialized_ || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
@@ -652,6 +710,12 @@ void Renderer::clearSeedTriangle()
 {
     destroyIndexBuffer(seedTriangleIbh_);
     seedTriangleIndices_.clear();
+}
+
+void Renderer::clearHighlightedSegment()
+{
+    destroyIndexBuffer(highlightedSegmentIbh_);
+    highlightedSegmentIndexCount_ = 0;
 }
 
 void Renderer::clearTriangleGroups()
@@ -795,6 +859,23 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         }
     }
 
+    if (bgfx::isValid(highlightedSegmentIbh_) && highlightedSegmentIndexCount_ > 0)
+    {
+        const float highlightColorUniform[4] = {1.0f, 0.88f, 0.08f, 1.0f};
+        const uint64_t highlightState = BGFX_STATE_WRITE_RGB
+            | BGFX_STATE_WRITE_A
+            | BGFX_STATE_DEPTH_TEST_LEQUAL
+            | BGFX_STATE_MSAA;
+        submitMeshPass(
+            highlightedSegmentIbh_,
+            highlightedSegmentIndexCount_,
+            highlightColorUniform,
+            materialUniform,
+            surfaceDrawParams,
+            highlightState
+        );
+    }
+
     const bool showOriginalBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Original
         || uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Both;
     const bool showSmoothedBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Smoothed
@@ -883,6 +964,7 @@ void Renderer::shutdown()
 {
     clearTriangleGroups();
     clearSeedTriangle();
+    clearHighlightedSegment();
     destroyGpuMesh();
 
     destroyUniform(uBaseColor_);
