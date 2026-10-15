@@ -176,7 +176,7 @@ bool uploadLineMesh(
             return false;
         }
 
-        vertices.push_back({position.x, position.y, position.z, kNeutralLineNormal});
+        vertices.push_back({position.x, position.y, position.z, kNeutralLineNormal, 0xffffffffu});
     }
 
     const bgfx::Memory* vmem = bgfx::copy(
@@ -508,6 +508,7 @@ bool Renderer::setSeedTriangle(const CpuMesh& mesh, uint32_t triangleIndex, std:
 bool Renderer::setTriangleGroups(
     const CpuMesh& mesh,
     const std::vector<uint32_t>& triangleGroups,
+    const std::vector<float>& triangleConfidence,
     uint32_t groupCount,
     std::string& error
 )
@@ -529,6 +530,39 @@ bool Renderer::setTriangleGroups(
     {
         error = "Triangle group assignment size does not match the triangle count.";
         return false;
+    }
+    if (triangleConfidence.size() != triangleCount)
+    {
+        error = "Triangle confidence count does not match the triangle count.";
+        return false;
+    }
+    if (mesh.vertices.size() > std::numeric_limits<uint32_t>::max() / sizeof(MeshVertex))
+    {
+        error = "Mesh vertex buffer is too large.";
+        return false;
+    }
+
+    std::vector<MeshVertex> shadedVertices = mesh.vertices;
+    for (uint32_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+    {
+        const float confidence = triangleConfidence[static_cast<std::size_t>(triangleIndex)];
+        if (!std::isfinite(confidence) || confidence < 0.0f || confidence > 1.0f)
+        {
+            error = "Triangle confidence must be finite and between zero and one.";
+            return false;
+        }
+        const uint32_t byte = static_cast<uint32_t>(std::lround(confidence * 255.0f));
+        const uint32_t packedConfidence = byte * 0x01010101u;
+        for (uint32_t corner = 0; corner < 3; ++corner)
+        {
+            const uint32_t vertexIndex = mesh.indices[triangleIndex * 3 + corner];
+            if (vertexIndex >= shadedVertices.size())
+            {
+                error = "Mesh contains an out-of-range vertex index.";
+                return false;
+            }
+            shadedVertices[vertexIndex].confidence = packedConfidence;
+        }
     }
 
     std::vector<std::vector<uint32_t> > groupedIndices(groupCount);
@@ -603,7 +637,25 @@ bool Renderer::setTriangleGroups(
         newSegmentBorderIndexCount = static_cast<uint32_t>(segmentBorderIndices.size());
     }
 
+    const bgfx::Memory* vmem = bgfx::copy(
+        shadedVertices.data(),
+        static_cast<uint32_t>(shadedVertices.size() * sizeof(MeshVertex))
+    );
+    const bgfx::VertexBufferHandle newVertexBuffer = bgfx::createVertexBuffer(vmem, MeshVertex::layout);
+    if (!bgfx::isValid(newVertexBuffer))
+    {
+        error = "Failed to create the triangle confidence vertex buffer.";
+        destroyIndexBuffer(newSegmentBorderIbh);
+        for (TriangleGroupDraw& groupDraw : newTriangleGroupDraws)
+        {
+            destroyIndexBuffer(groupDraw.ibh);
+        }
+        return false;
+    }
+
     clearTriangleGroups();
+    bgfx::destroy(gpuMesh_.vbh);
+    gpuMesh_.vbh = newVertexBuffer;
     segmentBorderIbh_ = newSegmentBorderIbh;
     segmentBorderIndexCount_ = newSegmentBorderIndexCount;
     triangleGroupDraws_ = std::move(newTriangleGroupDraws);
@@ -786,6 +838,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
     const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
     const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 1.0f};
     const float surfaceDrawParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float groupDrawParams[4] = {0.0f, uiState.shadeByConfidence ? 1.0f : 0.0f, 0.0f, 0.0f};
     const float borderDrawParams[4] = {2.0e-6f, 0.0f, 0.0f, 0.0f};
 
     const uint64_t state = BGFX_STATE_WRITE_RGB
@@ -853,7 +906,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
                 groupDraw.indexCount,
                 groupColorUniform,
                 materialUniform,
-                surfaceDrawParams,
+                groupDrawParams,
                 state
             );
         }

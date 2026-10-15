@@ -85,6 +85,9 @@ RendererUiActions drawRendererPanel(
     ImGui::Begin("Segmentation");
 
     ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
+    ImGui::BeginDisabled(!uiState.showSegmentation);
+    ImGui::Checkbox("Shade by confidence", &uiState.shadeByConfidence);
+    ImGui::EndDisabled();
     ImGui::Checkbox("Segment borders", &uiState.showSegmentBorders);
     if (uiState.showSegmentBorders)
     {

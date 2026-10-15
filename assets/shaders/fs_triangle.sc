@@ -1,4 +1,4 @@
-$input v_worldPos, v_worldNormal
+$input v_worldPos, v_worldNormal, v_confidence
 
 #include <bgfx_shader.sh>
 
@@ -7,6 +7,7 @@ uniform vec4 u_lightDir;
 uniform vec4 u_lightColor;
 uniform vec4 u_cameraPos;
 uniform vec4 u_material;
+uniform vec4 u_drawParams;
 
 void main()
 {
@@ -25,6 +26,8 @@ void main()
     vec3 linearColor = ambient + diffuse + specular;
     vec3 toneMapped = linearColor / (linearColor + vec3(1.0));
     vec3 srgb = pow(toneMapped, vec3(1.0 / 2.2));
+    float uncertainty = 1.0 - clamp(v_confidence.x, 0.0, 1.0);
+    float washout = 0.85 * uncertainty * uncertainty * u_drawParams.y;
 
-    gl_FragColor = vec4(srgb, u_baseColor.a);
+    gl_FragColor = vec4(mix(srgb, vec3(1.0), washout), u_baseColor.a);
 }

@@ -379,12 +379,14 @@ struct RandomWalkLabelCache
     segmesh::SegmentationModelType segmentationModelType = segmesh::SegmentationModelType::Graphical;
     std::vector<uint32_t> seedTriangles;
     std::vector<uint32_t> unmergedTriangleLabels;
+    std::vector<float> triangleConfidence;
 
     void invalidate()
     {
         valid = false;
         seedTriangles.clear();
         unmergedTriangleLabels.clear();
+        triangleConfidence.clear();
     }
 
     bool matches(
@@ -398,7 +400,8 @@ struct RandomWalkLabelCache
             && meshGeneration == requestedMeshGeneration
             && segmentationModelType == requestedSegmentationModelType
             && seedTriangles == requestedSeedTriangles
-            && unmergedTriangleLabels.size() == faceCount;
+            && unmergedTriangleLabels.size() == faceCount
+            && triangleConfidence.size() == faceCount;
     }
 };
 
@@ -577,10 +580,12 @@ bool refreshSegmentationPreview(
     }
 
     std::vector<uint32_t> triangleLabels;
+    std::vector<float> triangleConfidence;
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
     if (randomWalkLabelCache.matches(meshGeneration, uiState.segmentationModelType, seedTriangles, faceCount))
     {
         triangleLabels = randomWalkLabelCache.unmergedTriangleLabels;
+        triangleConfidence = randomWalkLabelCache.triangleConfidence;
     }
     else
     {
@@ -589,6 +594,7 @@ bool refreshSegmentationPreview(
                 uiState.segmentationModelType,
                 seedTriangles,
                 triangleLabels,
+                triangleConfidence,
                 error
             ))
         {
@@ -601,6 +607,7 @@ bool refreshSegmentationPreview(
         randomWalkLabelCache.segmentationModelType = uiState.segmentationModelType;
         randomWalkLabelCache.seedTriangles = seedTriangles;
         randomWalkLabelCache.unmergedTriangleLabels = triangleLabels;
+        randomWalkLabelCache.triangleConfidence = triangleConfidence;
     }
 
     const bool automaticStepInProgress =
@@ -670,7 +677,13 @@ bool refreshSegmentationPreview(
         return true;
     }
 
-    if (!renderer.setTriangleGroups(mesh, triangleLabels, segmentCount, error))
+    if (!renderer.setTriangleGroups(
+            mesh,
+            triangleLabels,
+            triangleConfidence,
+            segmentCount,
+            error
+        ))
     {
         return false;
     }

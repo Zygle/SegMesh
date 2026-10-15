@@ -54,6 +54,7 @@ bool segmentMeshRandomWalk(
     SegmentationModelType segmentationModelType,
     const std::vector<uint32_t>& seedTriangles,
     std::vector<uint32_t>& outTriangleLabels,
+    std::vector<float>& outTriangleConfidence,
     std::string& error
 );
 }

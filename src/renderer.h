@@ -27,6 +27,7 @@ public:
     bool setTriangleGroups(
         const CpuMesh& mesh,
         const std::vector<uint32_t>& triangleGroups,
+        const std::vector<float>& triangleConfidence,
         uint32_t groupCount,
         std::string& error
     );

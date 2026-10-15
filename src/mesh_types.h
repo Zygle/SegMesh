@@ -27,6 +27,7 @@ struct MeshVertex
     float y;
     float z;
     uint32_t normal;
+    uint32_t confidence = 0xffffffffu;
 
     static bgfx::VertexLayout layout;
 

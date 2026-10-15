@@ -39,6 +39,7 @@ struct RendererUiState
     float shininess = 64.0f;
 
     bool showSegmentation = false;
+    bool shadeByConfidence = false;
     bool showSegmentBorders = true;
     SegmentBorderDisplayMode segmentBorderDisplayMode = SegmentBorderDisplayMode::Both;
     float borderCurveFitTolerance = 0.01f;

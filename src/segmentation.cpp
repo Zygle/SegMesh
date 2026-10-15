@@ -1378,10 +1378,12 @@ bool segmentMeshRandomWalk(
     SegmentationModelType segmentationModelType,
     const std::vector<uint32_t>& seedTriangles,
     std::vector<uint32_t>& outTriangleLabels,
+    std::vector<float>& outTriangleConfidence,
     std::string& error
 )
 {
     outTriangleLabels.clear();
+    outTriangleConfidence.clear();
     error.clear();
 
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
@@ -1447,6 +1449,7 @@ bool segmentMeshRandomWalk(
     }
 
     outTriangleLabels.resize(faceCount, 0);
+    outTriangleConfidence.resize(faceCount, 1.0f);
     for (const uint32_t seedFace : uniqueSeeds)
     {
         outTriangleLabels[static_cast<std::size_t>(seedFace)] =
@@ -1587,6 +1590,8 @@ bool segmentMeshRandomWalk(
         }
 
         outTriangleLabels[static_cast<std::size_t>(faceIndex)] = static_cast<uint32_t>(bestLabel);
+        outTriangleConfidence[static_cast<std::size_t>(faceIndex)] =
+            static_cast<float>(std::clamp(bestValue, 0.0, 1.0));
     }
 
     return true;
