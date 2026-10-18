@@ -65,33 +65,33 @@ RendererUiActions drawRendererPanel(
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Status: %s", uiState.modelLoadError.c_str());
     }
     ImGui::Separator();
-    ImGui::Checkbox("Auto rotate", &uiState.autoRotate);
-    ImGui::SliderFloat("Rotate speed", &uiState.rotateSpeed, 0.0f, 3.0f);
-    ImGui::SliderFloat("Camera distance", &uiState.cameraDistance, 1.0f, 10.0f);
-    ImGui::SliderFloat("Camera yaw", &uiState.cameraYaw, -3.14f, 3.14f);
-    ImGui::SliderFloat("Camera pitch", &uiState.cameraPitch, -1.2f, 1.2f);
+    ImGui::Checkbox("Auto rotate", &uiState.rendering.autoRotate);
+    ImGui::SliderFloat("Rotate speed", &uiState.rendering.rotateSpeed, 0.0f, 3.0f);
+    ImGui::SliderFloat("Camera distance", &uiState.camera.distance, 1.0f, 10.0f);
+    ImGui::SliderFloat("Camera yaw", &uiState.camera.yaw, -3.14f, 3.14f);
+    ImGui::SliderFloat("Camera pitch", &uiState.camera.pitch, -1.2f, 1.2f);
     ImGui::Separator();
-    ImGui::ColorEdit3("Base color", uiState.baseColor);
-    ImGui::SliderFloat3("Light direction", uiState.lightDirection, -1.0f, 1.0f);
-    ImGui::ColorEdit3("Light color", uiState.lightColor);
-    ImGui::SliderFloat("Light intensity", &uiState.lightIntensity, 0.0f, 4.0f);
-    ImGui::SliderFloat("Ambient", &uiState.ambientStrength, 0.0f, 1.0f);
-    ImGui::SliderFloat("Specular", &uiState.specularStrength, 0.0f, 1.0f);
-    ImGui::SliderFloat("Shininess", &uiState.shininess, 8.0f, 256.0f);
+    ImGui::ColorEdit3("Base color", uiState.rendering.baseColor);
+    ImGui::SliderFloat3("Light direction", uiState.rendering.lightDirection, -1.0f, 1.0f);
+    ImGui::ColorEdit3("Light color", uiState.rendering.lightColor);
+    ImGui::SliderFloat("Light intensity", &uiState.rendering.lightIntensity, 0.0f, 4.0f);
+    ImGui::SliderFloat("Ambient", &uiState.rendering.ambientStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("Specular", &uiState.rendering.specularStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("Shininess", &uiState.rendering.shininess, 8.0f, 256.0f);
     ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(segmentationX, topMargin), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(panelWidth, segmentationHeight), ImGuiCond_Once);
     ImGui::Begin("Segmentation");
 
-    ImGui::Checkbox("Preview segmentation", &uiState.showSegmentation);
-    ImGui::BeginDisabled(!uiState.showSegmentation);
-    ImGui::Checkbox("Shade by confidence", &uiState.shadeByConfidence);
+    ImGui::Checkbox("Preview segmentation", &uiState.rendering.showSegmentation);
+    ImGui::BeginDisabled(!uiState.rendering.showSegmentation);
+    ImGui::Checkbox("Shade by confidence", &uiState.rendering.shadeByConfidence);
     ImGui::EndDisabled();
-    ImGui::Checkbox("Segment borders", &uiState.showSegmentBorders);
-    if (uiState.showSegmentBorders)
+    ImGui::Checkbox("Segment borders", &uiState.borders.visible);
+    if (uiState.borders.visible)
     {
-        int borderDisplayMode = static_cast<int>(uiState.segmentBorderDisplayMode);
+        int borderDisplayMode = static_cast<int>(uiState.borders.displayMode);
         const char* borderDisplayModeLabels[] = {"Original", "Smoothed", "Both"};
         ImGui::Combo(
             "Border style",
@@ -99,13 +99,13 @@ RendererUiActions drawRendererPanel(
             borderDisplayModeLabels,
             IM_ARRAYSIZE(borderDisplayModeLabels)
         );
-        uiState.segmentBorderDisplayMode = static_cast<SegmentBorderDisplayMode>(borderDisplayMode);
+        uiState.borders.displayMode = static_cast<SegmentBorderDisplayMode>(borderDisplayMode);
 
-        if (uiState.segmentBorderDisplayMode != SegmentBorderDisplayMode::Original)
+        if (uiState.borders.displayMode != SegmentBorderDisplayMode::Original)
         {
             ImGui::SliderFloat(
                 "Fit tolerance",
-                &uiState.borderCurveFitTolerance,
+                &uiState.borders.fitTolerance,
                 0.001f,
                 0.05f,
                 "%.4f",
@@ -113,43 +113,43 @@ RendererUiActions drawRendererPanel(
             );
             ImGui::SliderFloat(
                 "Drawing tolerance",
-                &uiState.borderCurveDrawingTolerance,
+                &uiState.borders.drawingTolerance,
                 0.0001f,
                 0.01f,
                 "%.4f",
                 ImGuiSliderFlags_Logarithmic
             );
-            ImGui::Checkbox("Show B\xC3\xA9zier control polygons", &uiState.showBezierControlPolygon);
+            ImGui::Checkbox("Show B\xC3\xA9zier control polygons", &uiState.borders.showControlPolygon);
             ImGui::TextUnformatted("Cyan: piecewise cubic B\xC3\xA9zier border.");
             ImGui::TextUnformatted("Orange: cubic control polygons.");
         }
     }
-    int segmentationModel = static_cast<int>(uiState.segmentationModelType);
+    int segmentationModel = static_cast<int>(uiState.segmentation.model);
     const char* segmentationModelLabels[] = {"Graphical", "Engineering"};
     ImGui::TextUnformatted("Segmentation model");
     ImGui::Combo("##SegmentationModel", &segmentationModel, segmentationModelLabels, IM_ARRAYSIZE(segmentationModelLabels));
-    uiState.segmentationModelType = static_cast<SegmentationModelType>(segmentationModel);
-    if (uiState.segmentationModelType == SegmentationModelType::Engineering)
+    uiState.segmentation.model = static_cast<SegmentationModelType>(segmentationModel);
+    if (uiState.segmentation.model == SegmentationModelType::Engineering)
     {
         ImGui::TextUnformatted("Engineering mode uses approximate curvature heuristics.");
     }
     ImGui::Separator();
-    ImGui::Checkbox("Automatic segmentation", &uiState.automaticSegmentation);
-    if (uiState.automaticSegmentation)
+    ImGui::Checkbox("Automatic segmentation", &uiState.segmentation.automatic);
+    if (uiState.segmentation.automatic)
     {
-        int autoMode = static_cast<int>(uiState.automaticSegmentationMode);
+        int autoMode = static_cast<int>(uiState.segmentation.automaticMode);
         const char* autoModeLabels[] = {"Coarse", "Fine"};
         ImGui::Combo("Auto mode", &autoMode, autoModeLabels, IM_ARRAYSIZE(autoModeLabels));
-        uiState.automaticSegmentationMode = static_cast<AutomaticSegmentationMode>(autoMode);
+        uiState.segmentation.automaticMode = static_cast<AutomaticSegmentationMode>(autoMode);
 
         const int minSeedCount =
-            uiState.automaticSegmentationMode == AutomaticSegmentationMode::Fine ? 20 : 1;
+            uiState.segmentation.automaticMode == AutomaticSegmentationMode::Fine ? 20 : 1;
         const int maxSeedCount =
-            uiState.automaticSegmentationMode == AutomaticSegmentationMode::Fine ? 200 : 64;
-        uiState.automaticSeedCount = std::clamp(uiState.automaticSeedCount, minSeedCount, maxSeedCount);
-        ImGui::SliderInt("Auto seed target", &uiState.automaticSeedCount, minSeedCount, maxSeedCount);
-        ImGui::Checkbox("Step-by-step", &uiState.stepAutomaticSegmentation);
-        if (uiState.stepAutomaticSegmentation)
+            uiState.segmentation.automaticMode == AutomaticSegmentationMode::Fine ? 200 : 64;
+        uiState.segmentation.automaticSeedCount = std::clamp(uiState.segmentation.automaticSeedCount, minSeedCount, maxSeedCount);
+        ImGui::SliderInt("Auto seed target", &uiState.segmentation.automaticSeedCount, minSeedCount, maxSeedCount);
+        ImGui::Checkbox("Step-by-step", &uiState.segmentation.stepByStep);
+        if (uiState.segmentation.stepByStep)
         {
             uiState.automaticStepSeedCount = std::max(uiState.automaticStepSeedCount, 1);
             if (ImGui::Button("Next step"))
@@ -169,33 +169,33 @@ RendererUiActions drawRendererPanel(
             ImGui::Text("Active auto seeds: %d", uiState.automaticStepSeedCount);
         }
 
-        if (uiState.automaticSegmentationMode == AutomaticSegmentationMode::Coarse)
+        if (uiState.segmentation.automaticMode == AutomaticSegmentationMode::Coarse)
         {
             ImGui::TextUnformatted("Coarse mode uses farthest-point geodesic seeding.");
         }
         else
         {
             ImGui::TextUnformatted("Fine mode uses feature-biased dense auto seeding.");
-            ImGui::Checkbox("Merge fine segments", &uiState.mergeFineSegments);
-            if (uiState.mergeFineSegments)
+            ImGui::Checkbox("Merge fine segments", &uiState.segmentation.mergeFineSegments);
+            if (uiState.segmentation.mergeFineSegments)
             {
-                const int maxMergedSegmentCount = std::max(uiState.automaticSeedCount, 1);
-                uiState.mergeTargetSegmentCount =
-                    std::clamp(uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
-                ImGui::SliderInt("Target regions", &uiState.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
-                ImGui::Checkbox("Force target regions", &uiState.forceMergeTargetSegmentCount);
-                if (!uiState.forceMergeTargetSegmentCount)
+                const int maxMergedSegmentCount = std::max(uiState.segmentation.automaticSeedCount, 1);
+                uiState.segmentation.mergeTargetSegmentCount =
+                    std::clamp(uiState.segmentation.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
+                ImGui::SliderInt("Target regions", &uiState.segmentation.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
+                ImGui::Checkbox("Force target regions", &uiState.segmentation.forceMergeTargetSegmentCount);
+                if (!uiState.segmentation.forceMergeTargetSegmentCount)
                 {
-                    ImGui::SliderFloat("Merge cost limit", &uiState.mergeCostThreshold, 0.05f, 2.0f);
+                    ImGui::SliderFloat("Merge cost limit", &uiState.segmentation.mergeCostThreshold, 0.05f, 2.0f);
                 }
             }
-            ImGui::Checkbox("Cleanup small segments", &uiState.cleanupSmallFineSegments);
-            if (uiState.cleanupSmallFineSegments)
+            ImGui::Checkbox("Cleanup small segments", &uiState.segmentation.cleanupSmallFineSegments);
+            if (uiState.segmentation.cleanupSmallFineSegments)
             {
-                uiState.minFineSegmentTriangles = std::clamp(uiState.minFineSegmentTriangles, 2, 128);
-                ImGui::SliderInt("Min triangles", &uiState.minFineSegmentTriangles, 2, 128);
+                uiState.segmentation.minFineSegmentTriangles = std::clamp(uiState.segmentation.minFineSegmentTriangles, 2, 128);
+                ImGui::SliderInt("Min triangles", &uiState.segmentation.minFineSegmentTriangles, 2, 128);
             }
-            if (uiState.forceMergeTargetSegmentCount)
+            if (uiState.segmentation.forceMergeTargetSegmentCount)
             {
                 ImGui::TextUnformatted("Force target can merge across strong boundaries to reach the requested count.");
             }
@@ -205,7 +205,7 @@ RendererUiActions drawRendererPanel(
             }
         }
     }
-    if (uiState.showSegmentation && !uiState.automaticSegmentation && seedTriangleCount == 0)
+    if (uiState.rendering.showSegmentation && !uiState.segmentation.automatic && seedTriangleCount == 0)
     {
         ImGui::TextUnformatted("Add at least one seed triangle to solve the segmentation.");
     }
@@ -253,7 +253,7 @@ RendererUiActions drawRendererPanel(
     }
 
     ImGui::Separator();
-    ImGui::BeginDisabled(uiState.automaticSegmentation || uiState.manualSegmentMerge);
+    ImGui::BeginDisabled(uiState.segmentation.automatic || uiState.manualSegmentMerge);
     if (ImGui::Button("Place random seed"))
     {
         actions.requestRandomSeed = true;
@@ -265,7 +265,7 @@ RendererUiActions drawRendererPanel(
     }
     ImGui::EndDisabled();
     ImGui::Text("Seed count: %u", seedTriangleCount);
-    if (uiState.automaticSegmentation)
+    if (uiState.segmentation.automatic)
     {
         ImGui::TextUnformatted("Manual seed placement is disabled while automatic mode is enabled.");
     }

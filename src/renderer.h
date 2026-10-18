@@ -2,7 +2,7 @@
 
 #include "border_curves.h"
 #include "mesh_types.h"
-#include "ui.h"
+#include "render_settings.h"
 
 #include <bgfx/bgfx.h>
 #include <GLFW/glfw3.h>
@@ -43,7 +43,14 @@ public:
     void clearTriangleGroups();
     void clearSegmentBorderOverlay();
     void resize(uint32_t width, uint32_t height);
-    void renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState);
+    void renderScene(
+        uint32_t width,
+        uint32_t height,
+        float modelRotation,
+        const CameraSettings& cameraSettings,
+        const RenderSettings& renderSettings,
+        const BorderSettings& borderSettings
+    );
     void frame();
     const char* rendererName() const;
     void shutdown();

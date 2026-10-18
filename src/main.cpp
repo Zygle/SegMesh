@@ -102,11 +102,11 @@ segmesh::Float3 rotateY(const segmesh::Float3& v, float angle)
 
 segmesh::Float3 cameraEyePosition(const segmesh::RendererUiState& uiState)
 {
-    const float cosPitch = std::cos(uiState.cameraPitch);
+    const float cosPitch = std::cos(uiState.camera.pitch);
     return {
-        std::sin(uiState.cameraYaw) * cosPitch * uiState.cameraDistance,
-        std::sin(uiState.cameraPitch) * uiState.cameraDistance,
-        std::cos(uiState.cameraYaw) * cosPitch * uiState.cameraDistance,
+        std::sin(uiState.camera.yaw) * cosPitch * uiState.camera.distance,
+        std::sin(uiState.camera.pitch) * uiState.camera.distance,
+        std::cos(uiState.camera.yaw) * cosPitch * uiState.camera.distance,
     };
 }
 
@@ -440,15 +440,15 @@ bool buildAutomaticSeedPlan(
 )
 {
     const int minSeedCount =
-        uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine ? 20 : 1;
-    const uint32_t targetSeedCount = static_cast<uint32_t>(std::max(uiState.automaticSeedCount, minSeedCount));
+        uiState.segmentation.automaticMode == segmesh::AutomaticSegmentationMode::Fine ? 20 : 1;
+    const uint32_t targetSeedCount = static_cast<uint32_t>(std::max(uiState.segmentation.automaticSeedCount, minSeedCount));
 
     bool success = false;
-    if (uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Coarse)
+    if (uiState.segmentation.automaticMode == segmesh::AutomaticSegmentationMode::Coarse)
     {
         success = segmesh::selectAutomaticSeedsCoarse(
             mesh,
-            uiState.segmentationModelType,
+            uiState.segmentation.model,
             targetSeedCount,
             automaticSeedPlanTriangles,
             error
@@ -458,7 +458,7 @@ bool buildAutomaticSeedPlan(
     {
         success = segmesh::selectAutomaticSeedsFine(
             mesh,
-            uiState.segmentationModelType,
+            uiState.segmentation.model,
             targetSeedCount,
             automaticSeedPlanTriangles,
             error
@@ -486,7 +486,7 @@ uint32_t automaticSeedPrefixCount(
         return 0;
     }
 
-    if (!uiState.stepAutomaticSegmentation)
+    if (!uiState.segmentation.stepByStep)
     {
         uiState.automaticStepSeedCount = static_cast<int>(planSeedCount);
         return planSeedCount;
@@ -573,7 +573,7 @@ bool refreshSegmentationPreview(
 )
 {
     outDisplayedTriangleLabels.clear();
-    if (!uiState.showSegmentation || seedTriangles.empty())
+    if (!uiState.rendering.showSegmentation || seedTriangles.empty())
     {
         renderer.clearTriangleGroups();
         return true;
@@ -582,7 +582,7 @@ bool refreshSegmentationPreview(
     std::vector<uint32_t> triangleLabels;
     std::vector<float> triangleConfidence;
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-    if (randomWalkLabelCache.matches(meshGeneration, uiState.segmentationModelType, seedTriangles, faceCount))
+    if (randomWalkLabelCache.matches(meshGeneration, uiState.segmentation.model, seedTriangles, faceCount))
     {
         triangleLabels = randomWalkLabelCache.unmergedTriangleLabels;
         triangleConfidence = randomWalkLabelCache.triangleConfidence;
@@ -591,7 +591,7 @@ bool refreshSegmentationPreview(
     {
         if (!segmesh::segmentMeshRandomWalk(
                 mesh,
-                uiState.segmentationModelType,
+                uiState.segmentation.model,
                 seedTriangles,
                 triangleLabels,
                 triangleConfidence,
@@ -604,27 +604,27 @@ bool refreshSegmentationPreview(
 
         randomWalkLabelCache.valid = true;
         randomWalkLabelCache.meshGeneration = meshGeneration;
-        randomWalkLabelCache.segmentationModelType = uiState.segmentationModelType;
+        randomWalkLabelCache.segmentationModelType = uiState.segmentation.model;
         randomWalkLabelCache.seedTriangles = seedTriangles;
         randomWalkLabelCache.unmergedTriangleLabels = triangleLabels;
         randomWalkLabelCache.triangleConfidence = triangleConfidence;
     }
 
     const bool automaticStepInProgress =
-        uiState.automaticSegmentation
-        && uiState.stepAutomaticSegmentation
-        && static_cast<int>(seedTriangles.size()) < std::max(uiState.automaticSeedCount, 1);
+        uiState.segmentation.automatic
+        && uiState.segmentation.stepByStep
+        && static_cast<int>(seedTriangles.size()) < std::max(uiState.segmentation.automaticSeedCount, 1);
 
-    if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
-        && uiState.mergeFineSegments && !automaticStepInProgress)
+    if (uiState.segmentation.automatic && uiState.segmentation.automaticMode == segmesh::AutomaticSegmentationMode::Fine
+        && uiState.segmentation.mergeFineSegments && !automaticStepInProgress)
     {
-        const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.mergeTargetSegmentCount, 1));
-        const double mergeCostLimit = uiState.forceMergeTargetSegmentCount
+        const uint32_t mergeTargetSegmentCount = static_cast<uint32_t>(std::max(uiState.segmentation.mergeTargetSegmentCount, 1));
+        const double mergeCostLimit = uiState.segmentation.forceMergeTargetSegmentCount
             ? std::numeric_limits<double>::infinity()
-            : static_cast<double>(uiState.mergeCostThreshold);
+            : static_cast<double>(uiState.segmentation.mergeCostThreshold);
         if (!segmesh::mergeSegmentsByBoundaryCost(
                 mesh,
-                uiState.segmentationModelType,
+                uiState.segmentation.model,
                 mergeTargetSegmentCount,
                 mergeCostLimit,
                 triangleLabels,
@@ -635,13 +635,13 @@ bool refreshSegmentationPreview(
         }
     }
 
-    if (uiState.automaticSegmentation && uiState.automaticSegmentationMode == segmesh::AutomaticSegmentationMode::Fine
-        && uiState.cleanupSmallFineSegments && !automaticStepInProgress)
+    if (uiState.segmentation.automatic && uiState.segmentation.automaticMode == segmesh::AutomaticSegmentationMode::Fine
+        && uiState.segmentation.cleanupSmallFineSegments && !automaticStepInProgress)
     {
-        const uint32_t minTriangleCount = static_cast<uint32_t>(std::max(uiState.minFineSegmentTriangles, 2));
+        const uint32_t minTriangleCount = static_cast<uint32_t>(std::max(uiState.segmentation.minFineSegmentTriangles, 2));
         if (!segmesh::mergeSmallSegmentsByTriangleCount(
                 mesh,
-                uiState.segmentationModelType,
+                uiState.segmentation.model,
                 minTriangleCount,
                 triangleLabels,
                 error
@@ -689,8 +689,8 @@ bool refreshSegmentationPreview(
     }
 
     segmesh::BorderCurveSettings borderCurveSettings{};
-    borderCurveSettings.fitTolerance = static_cast<double>(uiState.borderCurveFitTolerance);
-    borderCurveSettings.drawingTolerance = static_cast<double>(uiState.borderCurveDrawingTolerance);
+    borderCurveSettings.fitTolerance = static_cast<double>(uiState.borders.fitTolerance);
+    borderCurveSettings.drawingTolerance = static_cast<double>(uiState.borders.drawingTolerance);
 
     segmesh::BorderCurveOverlay borderCurveOverlay;
     if (!segmesh::buildSegmentBorderOverlay(
@@ -953,26 +953,26 @@ int main(int argc, char** argv)
             1
         );
 
-        const bool previousShowSegmentation = uiState.showSegmentation;
-        const bool previousAutomaticSegmentation = uiState.automaticSegmentation;
-        const segmesh::SegmentationModelType previousSegmentationModelType = uiState.segmentationModelType;
+        const bool previousShowSegmentation = uiState.rendering.showSegmentation;
+        const bool previousAutomaticSegmentation = uiState.segmentation.automatic;
+        const segmesh::SegmentationModelType previousSegmentationModelType = uiState.segmentation.model;
         const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
-            uiState.automaticSegmentationMode;
-        const int previousAutomaticSeedCount = uiState.automaticSeedCount;
-        const bool previousStepAutomaticSegmentation = uiState.stepAutomaticSegmentation;
+            uiState.segmentation.automaticMode;
+        const int previousAutomaticSeedCount = uiState.segmentation.automaticSeedCount;
+        const bool previousStepAutomaticSegmentation = uiState.segmentation.stepByStep;
         const int previousAutomaticStepSeedCount = uiState.automaticStepSeedCount;
-        const bool previousMergeFineSegments = uiState.mergeFineSegments;
-        const int previousMergeTargetSegmentCount = uiState.mergeTargetSegmentCount;
-        const bool previousForceMergeTargetSegmentCount = uiState.forceMergeTargetSegmentCount;
-        const float previousMergeCostThreshold = uiState.mergeCostThreshold;
-        const bool previousCleanupSmallFineSegments = uiState.cleanupSmallFineSegments;
-        const int previousMinFineSegmentTriangles = uiState.minFineSegmentTriangles;
-        const float previousBorderCurveFitTolerance = uiState.borderCurveFitTolerance;
-        const float previousBorderCurveDrawingTolerance = uiState.borderCurveDrawingTolerance;
+        const bool previousMergeFineSegments = uiState.segmentation.mergeFineSegments;
+        const int previousMergeTargetSegmentCount = uiState.segmentation.mergeTargetSegmentCount;
+        const bool previousForceMergeTargetSegmentCount = uiState.segmentation.forceMergeTargetSegmentCount;
+        const float previousMergeCostThreshold = uiState.segmentation.mergeCostThreshold;
+        const bool previousCleanupSmallFineSegments = uiState.segmentation.cleanupSmallFineSegments;
+        const int previousMinFineSegmentTriangles = uiState.segmentation.minFineSegmentTriangles;
+        const float previousBorderCurveFitTolerance = uiState.borders.fitTolerance;
+        const float previousBorderCurveDrawingTolerance = uiState.borders.drawingTolerance;
         const bool previousManualSegmentMerge = uiState.manualSegmentMerge;
         const std::vector<uint32_t>& seedsBeforeUi =
-            activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
-        const bool hasSegmentationPreview = uiState.showSegmentation
+            activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
+        const bool hasSegmentationPreview = uiState.rendering.showSegmentation
             && displayedTriangleLabels.size() == mesh.indices.size() / 3;
         int32_t selectedMergeSegment = -1;
         if (selectedMergeTriangle.has_value()
@@ -997,7 +997,7 @@ int main(int argc, char** argv)
             renderer.rendererName(),
             uiState
         );
-        if (uiState.automaticSegmentation && uiState.stepAutomaticSegmentation)
+        if (uiState.segmentation.automatic && uiState.segmentation.stepByStep)
         {
             if (!previousStepAutomaticSegmentation)
             {
@@ -1021,32 +1021,32 @@ int main(int argc, char** argv)
                     : currentStepSeedCount;
             }
         }
-        if (uiState.automaticSegmentation)
+        if (uiState.segmentation.automatic)
         {
-            uiState.showSegmentation = true;
+            uiState.rendering.showSegmentation = true;
         }
         const bool mouseOverUi = ImGui::MouseOverArea();
-        const bool previewSettingsChanged = uiState.showSegmentation != previousShowSegmentation;
+        const bool previewSettingsChanged = uiState.rendering.showSegmentation != previousShowSegmentation;
         const bool automaticSegmentationChanged =
-            uiState.automaticSegmentation != previousAutomaticSegmentation;
+            uiState.segmentation.automatic != previousAutomaticSegmentation;
         const bool automaticSegmentationModeChanged =
-            uiState.automaticSegmentationMode != previousAutomaticSegmentationMode;
+            uiState.segmentation.automaticMode != previousAutomaticSegmentationMode;
         const bool segmentationModelChanged =
-            uiState.segmentationModelType != previousSegmentationModelType;
-        const bool automaticSeedCountChanged = uiState.automaticSeedCount != previousAutomaticSeedCount;
+            uiState.segmentation.model != previousSegmentationModelType;
+        const bool automaticSeedCountChanged = uiState.segmentation.automaticSeedCount != previousAutomaticSeedCount;
         const bool automaticStepSettingsChanged =
-            uiState.stepAutomaticSegmentation != previousStepAutomaticSegmentation
+            uiState.segmentation.stepByStep != previousStepAutomaticSegmentation
             || uiState.automaticStepSeedCount != previousAutomaticStepSeedCount;
         const bool mergeSettingsChanged =
-            uiState.mergeFineSegments != previousMergeFineSegments
-            || uiState.mergeTargetSegmentCount != previousMergeTargetSegmentCount
-            || uiState.forceMergeTargetSegmentCount != previousForceMergeTargetSegmentCount
-            || uiState.mergeCostThreshold != previousMergeCostThreshold
-            || uiState.cleanupSmallFineSegments != previousCleanupSmallFineSegments
-            || uiState.minFineSegmentTriangles != previousMinFineSegmentTriangles;
+            uiState.segmentation.mergeFineSegments != previousMergeFineSegments
+            || uiState.segmentation.mergeTargetSegmentCount != previousMergeTargetSegmentCount
+            || uiState.segmentation.forceMergeTargetSegmentCount != previousForceMergeTargetSegmentCount
+            || uiState.segmentation.mergeCostThreshold != previousMergeCostThreshold
+            || uiState.segmentation.cleanupSmallFineSegments != previousCleanupSmallFineSegments
+            || uiState.segmentation.minFineSegmentTriangles != previousMinFineSegmentTriangles;
         const bool borderCurveSettingsChanged =
-            uiState.borderCurveFitTolerance != previousBorderCurveFitTolerance
-            || uiState.borderCurveDrawingTolerance != previousBorderCurveDrawingTolerance;
+            uiState.borders.fitTolerance != previousBorderCurveFitTolerance
+            || uiState.borders.drawingTolerance != previousBorderCurveDrawingTolerance;
         const bool shouldOrbitDrag = leftPressed && !mouseOverUi;
 
         if (shouldOrbitDrag && !orbitDragging)
@@ -1104,7 +1104,7 @@ int main(int argc, char** argv)
         }
 
         bool activeSeedsChanged = false;
-        if (uiState.automaticSegmentation
+        if (uiState.segmentation.automatic
             && (meshReloaded || automaticSegmentationChanged || automaticSegmentationModeChanged
                 || segmentationModelChanged
                 || automaticSeedCountChanged))
@@ -1127,7 +1127,7 @@ int main(int argc, char** argv)
                 uiState.modelLoadError = autoSeedError;
             }
         }
-        else if (uiState.automaticSegmentation && automaticStepSettingsChanged)
+        else if (uiState.segmentation.automatic && automaticStepSettingsChanged)
         {
             std::string stepError;
             if (syncAutomaticSeedPrefix(
@@ -1151,7 +1151,7 @@ int main(int argc, char** argv)
         {
             std::string seedDisplayError;
             const std::vector<uint32_t>& currentSeeds =
-                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
+                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
             if (syncDisplayedSeedTriangles(renderer, mesh, currentSeeds, seedDisplayError))
             {
                 activeSeedsChanged = true;
@@ -1209,9 +1209,9 @@ int main(int argc, char** argv)
         {
             const double mouseDeltaX = mouseX - previousMouseX;
             const double mouseDeltaY = mouseY - previousMouseY;
-            uiState.cameraYaw = wrapAngle(uiState.cameraYaw + static_cast<float>(mouseDeltaX) * kOrbitSensitivity);
-            uiState.cameraPitch =
-                clampOrbitPitch(uiState.cameraPitch + static_cast<float>(mouseDeltaY) * kOrbitSensitivity);
+            uiState.camera.yaw = wrapAngle(uiState.camera.yaw + static_cast<float>(mouseDeltaX) * kOrbitSensitivity);
+            uiState.camera.pitch =
+                clampOrbitPitch(uiState.camera.pitch + static_cast<float>(mouseDeltaY) * kOrbitSensitivity);
         }
 
         if (!mouseOverUi)
@@ -1219,14 +1219,14 @@ int main(int argc, char** argv)
 
             if (scroll != 0)
             {
-                uiState.cameraDistance = std::clamp(
-                    uiState.cameraDistance - static_cast<float>(scroll) * kZoomSensitivity,
+                uiState.camera.distance = std::clamp(
+                    uiState.camera.distance - static_cast<float>(scroll) * kZoomSensitivity,
                     kMinCameraDistance,
                     kMaxCameraDistance
                 );
             }
 
-            if ((uiState.manualSegmentMerge || !uiState.automaticSegmentation)
+            if ((uiState.manualSegmentMerge || !uiState.segmentation.automatic)
                 && rightPressed && !previousRightPressed)
             {
                 double mouseFramebufferX = mouseX;
@@ -1365,7 +1365,7 @@ int main(int argc, char** argv)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =
-                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.automaticSegmentation);
+                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
             if (!refreshSegmentationPreview(
                     renderer,
                     mesh,
@@ -1460,13 +1460,20 @@ int main(int argc, char** argv)
         previousMouseY = mouseY;
         previousRightPressed = rightPressed;
 
-        renderer.renderScene(static_cast<uint32_t>(width), static_cast<uint32_t>(height), modelRotation, uiState);
+        renderer.renderScene(
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height),
+            modelRotation,
+            uiState.camera,
+            uiState.rendering,
+            uiState.borders
+        );
         imguiEndFrame();
         renderer.frame();
 
-        if (uiState.autoRotate)
+        if (uiState.rendering.autoRotate)
         {
-            modelRotation += uiState.rotateSpeed * dt;
+            modelRotation += uiState.rendering.rotateSpeed * dt;
         }
     }
 

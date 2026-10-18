@@ -1,6 +1,7 @@
 #pragma once
 
-#include "mesh_types.h"
+#include "render_settings.h"
+#include "segmentation_settings.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -9,56 +10,15 @@
 
 namespace segmesh
 {
-enum class AutomaticSegmentationMode : int
-{
-    Coarse = 0,
-    Fine = 1,
-};
-
-enum class SegmentBorderDisplayMode : int
-{
-    Original = 0,
-    Smoothed = 1,
-    Both = 2,
-};
-
 struct RendererUiState
 {
-    float cameraDistance = 3.0f;
-    float cameraYaw = 0.0f;
-    float cameraPitch = 0.35f;
-    float rotateSpeed = 0.8f;
-    bool autoRotate = false;
+    CameraSettings camera;
+    RenderSettings rendering;
+    BorderSettings borders;
+    SegmentationSettings segmentation;
 
-    float baseColor[3] = {0.78f, 0.78f, 0.78f};
-    float lightDirection[3] = {-0.45f, -0.9f, -0.25f};
-    float lightColor[3] = {1.0f, 0.98f, 0.95f};
-    float lightIntensity = 1.5f;
-    float ambientStrength = 0.22f;
-    float specularStrength = 0.32f;
-    float shininess = 64.0f;
-
-    bool showSegmentation = false;
-    bool shadeByConfidence = false;
-    bool showSegmentBorders = true;
-    SegmentBorderDisplayMode segmentBorderDisplayMode = SegmentBorderDisplayMode::Both;
-    float borderCurveFitTolerance = 0.01f;
-    float borderCurveDrawingTolerance = 0.1f;
-    bool showBezierControlPolygon = false;
-    bool automaticSegmentation = false;
-    SegmentationModelType segmentationModelType = SegmentationModelType::Graphical;
-    AutomaticSegmentationMode automaticSegmentationMode = AutomaticSegmentationMode::Coarse;
-    int automaticSeedCount = 8;
-    bool stepAutomaticSegmentation = false;
     int automaticStepSeedCount = 1;
-    bool mergeFineSegments = true;
-    int mergeTargetSegmentCount = 30;
-    bool forceMergeTargetSegmentCount = false;
-    float mergeCostThreshold = 0.5f;
-    bool cleanupSmallFineSegments = true;
-    int minFineSegmentTriangles = 24;
     bool manualSegmentMerge = false;
-
     std::string modelLoadError;
 };
 

@@ -800,7 +800,14 @@ void Renderer::resize(uint32_t width, uint32_t height)
     bgfx::reset(width, height, BGFX_RESET_VSYNC);
 }
 
-void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation, const RendererUiState& uiState)
+void Renderer::renderScene(
+    uint32_t width,
+    uint32_t height,
+    float modelRotation,
+    const CameraSettings& cameraSettings,
+    const RenderSettings& renderSettings,
+    const BorderSettings& borderSettings
+)
 {
     if (!initialized_ || !bgfx::isValid(meshProgram_) || !bgfx::isValid(gpuMesh_.vbh) || !bgfx::isValid(gpuMesh_.ibh))
     {
@@ -812,9 +819,9 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303040ff, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
 
-    const float eyeX = std::sin(uiState.cameraYaw) * std::cos(uiState.cameraPitch) * uiState.cameraDistance;
-    const float eyeY = std::sin(uiState.cameraPitch) * uiState.cameraDistance;
-    const float eyeZ = std::cos(uiState.cameraYaw) * std::cos(uiState.cameraPitch) * uiState.cameraDistance;
+    const float eyeX = std::sin(cameraSettings.yaw) * std::cos(cameraSettings.pitch) * cameraSettings.distance;
+    const float eyeY = std::sin(cameraSettings.pitch) * cameraSettings.distance;
+    const float eyeZ = std::cos(cameraSettings.yaw) * std::cos(cameraSettings.pitch) * cameraSettings.distance;
 
     const bx::Vec3 eye{eyeX, eyeY, eyeZ};
     const bx::Vec3 at{0.0f, 0.0f, 0.0f};
@@ -829,16 +836,16 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
     bx::mtxRotateY(model, modelRotation);
 
     const Float3 lightDir = normalize(
-        {uiState.lightDirection[0], uiState.lightDirection[1], uiState.lightDirection[2]},
+        {renderSettings.lightDirection[0], renderSettings.lightDirection[1], renderSettings.lightDirection[2]},
         {-0.45f, -0.9f, -0.25f}
     );
-    const float baseColorUniform[4] = {uiState.baseColor[0], uiState.baseColor[1], uiState.baseColor[2], 1.0f};
-    const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, uiState.lightIntensity};
-    const float lightColorUniform[4] = {uiState.lightColor[0], uiState.lightColor[1], uiState.lightColor[2], 1.0f};
+    const float baseColorUniform[4] = {renderSettings.baseColor[0], renderSettings.baseColor[1], renderSettings.baseColor[2], 1.0f};
+    const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, renderSettings.lightIntensity};
+    const float lightColorUniform[4] = {renderSettings.lightColor[0], renderSettings.lightColor[1], renderSettings.lightColor[2], 1.0f};
     const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
-    const float materialUniform[4] = {uiState.ambientStrength, uiState.specularStrength, uiState.shininess, 1.0f};
+    const float materialUniform[4] = {renderSettings.ambientStrength, renderSettings.specularStrength, renderSettings.shininess, 1.0f};
     const float surfaceDrawParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const float groupDrawParams[4] = {0.0f, uiState.shadeByConfidence ? 1.0f : 0.0f, 0.0f, 0.0f};
+    const float groupDrawParams[4] = {0.0f, renderSettings.shadeByConfidence ? 1.0f : 0.0f, 0.0f, 0.0f};
     const float borderDrawParams[4] = {2.0e-6f, 0.0f, 0.0f, 0.0f};
 
     const uint64_t state = BGFX_STATE_WRITE_RGB
@@ -929,10 +936,10 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         );
     }
 
-    const bool showOriginalBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Original
-        || uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Both;
-    const bool showSmoothedBorders = uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Smoothed
-        || uiState.segmentBorderDisplayMode == SegmentBorderDisplayMode::Both;
+    const bool showOriginalBorders = borderSettings.displayMode == SegmentBorderDisplayMode::Original
+        || borderSettings.displayMode == SegmentBorderDisplayMode::Both;
+    const bool showSmoothedBorders = borderSettings.displayMode == SegmentBorderDisplayMode::Smoothed
+        || borderSettings.displayMode == SegmentBorderDisplayMode::Both;
     const float borderMaterialUniform[4] = {1.0f, 0.0f, 1.0f, 0.0f};
     const uint64_t borderState = BGFX_STATE_WRITE_RGB
         | BGFX_STATE_WRITE_A
@@ -941,7 +948,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         | BGFX_STATE_LINEAA
         | BGFX_STATE_MSAA;
 
-    if (uiState.showSegmentBorders && showOriginalBorders
+    if (borderSettings.visible && showOriginalBorders
         && bgfx::isValid(segmentBorderIbh_) && segmentBorderIndexCount_ > 0)
     {
         const float borderColorUniform[4] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -955,7 +962,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         );
     }
 
-    if (uiState.showSegmentBorders && showSmoothedBorders
+    if (borderSettings.visible && showSmoothedBorders
         && bgfx::isValid(smoothedBorderMesh_.vbh) && bgfx::isValid(smoothedBorderMesh_.ibh)
         && smoothedBorderMesh_.indexCount > 0)
     {
@@ -963,7 +970,7 @@ void Renderer::renderScene(uint32_t width, uint32_t height, float modelRotation,
         submitLinePass(smoothedBorderMesh_, smoothedBorderColorUniform, borderMaterialUniform, borderState);
     }
 
-    if (uiState.showSegmentBorders && showSmoothedBorders && uiState.showBezierControlPolygon
+    if (borderSettings.visible && showSmoothedBorders && borderSettings.showControlPolygon
         && bgfx::isValid(controlPolygonMesh_.vbh) && bgfx::isValid(controlPolygonMesh_.ibh)
         && controlPolygonMesh_.indexCount > 0)
     {

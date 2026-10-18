@@ -1,5 +1,7 @@
 #pragma once
 
+#include "segmentation_settings.h"
+
 #include <bgfx/bgfx.h>
 
 #include <array>
@@ -8,12 +10,6 @@
 
 namespace segmesh
 {
-enum class SegmentationModelType : int
-{
-    Graphical = 0,
-    Engineering = 1,
-};
-
 struct Float3
 {
     float x;
