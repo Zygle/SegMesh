@@ -162,7 +162,6 @@ Possible future preprocessing reference:
 
 #TODO
 B-spline
-color triangle side by segment weight
 load preset model
 better seed placement
 ![](image.png) debug
