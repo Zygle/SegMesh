@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mesh_types.h"
+#include "seed_selection.h"
 
 #include <cstdint>
 #include <string>
@@ -8,22 +9,6 @@
 
 namespace segmesh
 {
-bool selectAutomaticSeedsCoarse(
-    const CpuMesh& mesh,
-    SegmentationModelType segmentationModelType,
-    uint32_t approximateSeedCount,
-    std::vector<uint32_t>& outSeedTriangles,
-    std::string& error
-);
-
-bool selectAutomaticSeedsFine(
-    const CpuMesh& mesh,
-    SegmentationModelType segmentationModelType,
-    uint32_t approximateSeedCount,
-    std::vector<uint32_t>& outSeedTriangles,
-    std::string& error
-);
-
 bool mergeSegmentsByBoundaryCost(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,
