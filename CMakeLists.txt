@@ -171,6 +171,7 @@ add_executable(segmesh
   src/obj_loader.cpp
   src/renderer.cpp
   src/seed_selection.cpp
+  src/segment_merging.cpp
   src/segmentation.cpp
   src/ui.cpp
   src/main.cpp
