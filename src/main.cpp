@@ -2,6 +2,7 @@
 #include "obj_loader.h"
 #include "renderer.h"
 #include "segmentation.h"
+#include "segmentation_session.h"
 #include "ui.h"
 
 #include <GLFW/glfw3.h>
@@ -363,54 +364,6 @@ std::optional<uint32_t> pickRandomSeedTriangle(
     return candidate;
 }
 
-const std::vector<uint32_t>& activeSeedTriangles(
-    const std::vector<uint32_t>& manualSeedTriangles,
-    const std::vector<uint32_t>& automaticSeedTriangles,
-    bool automaticSegmentation
-)
-{
-    return automaticSegmentation ? automaticSeedTriangles : manualSeedTriangles;
-}
-
-struct RandomWalkLabelCache
-{
-    bool valid = false;
-    uint64_t meshGeneration = 0;
-    segmesh::SegmentationModelType segmentationModelType = segmesh::SegmentationModelType::Graphical;
-    std::vector<uint32_t> seedTriangles;
-    std::vector<uint32_t> unmergedTriangleLabels;
-    std::vector<float> triangleConfidence;
-
-    void invalidate()
-    {
-        valid = false;
-        seedTriangles.clear();
-        unmergedTriangleLabels.clear();
-        triangleConfidence.clear();
-    }
-
-    bool matches(
-        uint64_t requestedMeshGeneration,
-        segmesh::SegmentationModelType requestedSegmentationModelType,
-        const std::vector<uint32_t>& requestedSeedTriangles,
-        uint32_t faceCount
-    ) const
-    {
-        return valid
-            && meshGeneration == requestedMeshGeneration
-            && segmentationModelType == requestedSegmentationModelType
-            && seedTriangles == requestedSeedTriangles
-            && unmergedTriangleLabels.size() == faceCount
-            && triangleConfidence.size() == faceCount;
-    }
-};
-
-struct ManualSegmentMerge
-{
-    uint32_t sourceTriangle = 0;
-    uint32_t targetTriangle = 0;
-};
-
 bool syncDisplayedSeedTriangles(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -565,14 +518,11 @@ bool refreshSegmentationPreview(
     const segmesh::CpuMesh& mesh,
     const std::vector<uint32_t>& seedTriangles,
     const segmesh::RendererUiState& uiState,
-    uint64_t meshGeneration,
-    RandomWalkLabelCache& randomWalkLabelCache,
-    const std::vector<ManualSegmentMerge>& manualSegmentMerges,
-    std::vector<uint32_t>& outDisplayedTriangleLabels,
+    segmesh::SegmentationSession& session,
     std::string& error
 )
 {
-    outDisplayedTriangleLabels.clear();
+    session.displayedTriangleLabels.clear();
     if (!uiState.rendering.showSegmentation || seedTriangles.empty())
     {
         renderer.clearTriangleGroups();
@@ -581,33 +531,16 @@ bool refreshSegmentationPreview(
 
     std::vector<uint32_t> triangleLabels;
     std::vector<float> triangleConfidence;
-    const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-    if (randomWalkLabelCache.matches(meshGeneration, uiState.segmentation.model, seedTriangles, faceCount))
+    if (!session.solveRawLabels(
+            mesh,
+            uiState.segmentation.model,
+            seedTriangles,
+            triangleLabels,
+            triangleConfidence,
+            error
+        ))
     {
-        triangleLabels = randomWalkLabelCache.unmergedTriangleLabels;
-        triangleConfidence = randomWalkLabelCache.triangleConfidence;
-    }
-    else
-    {
-        if (!segmesh::segmentMeshRandomWalk(
-                mesh,
-                uiState.segmentation.model,
-                seedTriangles,
-                triangleLabels,
-                triangleConfidence,
-                error
-            ))
-        {
-            randomWalkLabelCache.invalidate();
-            return false;
-        }
-
-        randomWalkLabelCache.valid = true;
-        randomWalkLabelCache.meshGeneration = meshGeneration;
-        randomWalkLabelCache.segmentationModelType = uiState.segmentation.model;
-        randomWalkLabelCache.seedTriangles = seedTriangles;
-        randomWalkLabelCache.unmergedTriangleLabels = triangleLabels;
-        randomWalkLabelCache.triangleConfidence = triangleConfidence;
+        return false;
     }
 
     const bool automaticStepInProgress =
@@ -651,7 +584,7 @@ bool refreshSegmentationPreview(
         }
     }
 
-    for (const ManualSegmentMerge& merge : manualSegmentMerges)
+    for (const segmesh::ManualSegmentMerge& merge : session.manualSegmentMerges)
     {
         if (!segmesh::mergeAdjacentSegmentsByTriangles(
                 mesh,
@@ -711,7 +644,7 @@ bool refreshSegmentationPreview(
         return false;
     }
 
-    outDisplayedTriangleLabels = std::move(triangleLabels);
+    session.displayedTriangleLabels = std::move(triangleLabels);
     return true;
 }
 
@@ -721,10 +654,7 @@ bool addSeedTriangle(
     uint32_t triangleIndex,
     std::vector<uint32_t>& selectedSeedTriangles,
     const segmesh::RendererUiState& uiState,
-    uint64_t meshGeneration,
-    RandomWalkLabelCache& randomWalkLabelCache,
-    const std::vector<ManualSegmentMerge>& manualSegmentMerges,
-    std::vector<uint32_t>& outDisplayedTriangleLabels,
+    segmesh::SegmentationSession& session,
     std::string& error
 )
 {
@@ -747,10 +677,7 @@ bool addSeedTriangle(
         mesh,
         selectedSeedTriangles,
         uiState,
-        meshGeneration,
-        randomWalkLabelCache,
-        manualSegmentMerges,
-        outDisplayedTriangleLabels,
+        session,
         error
     );
 }
@@ -875,14 +802,7 @@ int main(int argc, char** argv)
     imguiCreate(18.0f);
 
     float modelRotation = 0.0f;
-    std::vector<uint32_t> manualSeedTriangles;
-    std::vector<uint32_t> automaticSeedPlanTriangles;
-    std::vector<uint32_t> automaticSeedTriangles;
-    std::vector<ManualSegmentMerge> manualSegmentMerges;
-    std::vector<uint32_t> displayedTriangleLabels;
-    std::optional<uint32_t> selectedMergeTriangle;
-    uint64_t meshGeneration = 1;
-    RandomWalkLabelCache randomWalkLabelCache;
+    segmesh::SegmentationSession session;
     segmesh::RendererUiState uiState{};
     std::mt19937 randomEngine(std::random_device{}());
     double previousMouseX = 0.0;
@@ -971,17 +891,17 @@ int main(int argc, char** argv)
         const float previousBorderCurveDrawingTolerance = uiState.borders.drawingTolerance;
         const bool previousManualSegmentMerge = uiState.manualSegmentMerge;
         const std::vector<uint32_t>& seedsBeforeUi =
-            activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
+            session.activeSeeds(uiState.segmentation.automatic);
         const bool hasSegmentationPreview = uiState.rendering.showSegmentation
-            && displayedTriangleLabels.size() == mesh.indices.size() / 3;
+            && session.displayedTriangleLabels.size() == mesh.indices.size() / 3;
         int32_t selectedMergeSegment = -1;
-        if (selectedMergeTriangle.has_value()
-            && *selectedMergeTriangle < displayedTriangleLabels.size()
-            && displayedTriangleLabels[*selectedMergeTriangle]
+        if (session.selectedMergeTriangle.has_value()
+            && *session.selectedMergeTriangle < session.displayedTriangleLabels.size()
+            && session.displayedTriangleLabels[*session.selectedMergeTriangle]
                 <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
         {
             selectedMergeSegment = static_cast<int32_t>(
-                displayedTriangleLabels[*selectedMergeTriangle]
+                session.displayedTriangleLabels[*session.selectedMergeTriangle]
             );
         }
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
@@ -993,7 +913,7 @@ int main(int argc, char** argv)
             static_cast<uint32_t>(seedsBeforeUi.size()),
             hasSegmentationPreview,
             selectedMergeSegment,
-            static_cast<uint32_t>(manualSegmentMerges.size()),
+            static_cast<uint32_t>(session.manualSegmentMerges.size()),
             renderer.rendererName(),
             uiState
         );
@@ -1009,9 +929,9 @@ int main(int argc, char** argv)
             }
             else if (uiActions.requestAutomaticStepFinish)
             {
-                uiState.automaticStepSeedCount = automaticSeedPlanTriangles.empty()
+                uiState.automaticStepSeedCount = session.automaticSeedPlanTriangles.empty()
                     ? std::numeric_limits<int>::max()
-                    : static_cast<int>(automaticSeedPlanTriangles.size());
+                    : static_cast<int>(session.automaticSeedPlanTriangles.size());
             }
             else if (uiActions.requestAutomaticStep)
             {
@@ -1085,15 +1005,8 @@ int main(int argc, char** argv)
                 objPath = newPath;
                 selectedModelIndex = pendingModelIndex;
                 modelRotation = 0.0f;
-                manualSeedTriangles.clear();
-                automaticSeedPlanTriangles.clear();
-                automaticSeedTriangles.clear();
-                manualSegmentMerges.clear();
-                displayedTriangleLabels.clear();
-                selectedMergeTriangle.reset();
+                session.resetForMesh();
                 uiState.manualSegmentMerge = false;
-                ++meshGeneration;
-                randomWalkLabelCache.invalidate();
                 meshReloaded = true;
                 uiState.modelLoadError.clear();
             }
@@ -1114,8 +1027,8 @@ int main(int argc, char** argv)
                     renderer,
                     mesh,
                     uiState,
-                    automaticSeedPlanTriangles,
-                    automaticSeedTriangles,
+                    session.automaticSeedPlanTriangles,
+                    session.automaticSeedTriangles,
                     autoSeedError
                 ))
             {
@@ -1134,8 +1047,8 @@ int main(int argc, char** argv)
                     renderer,
                     mesh,
                     uiState,
-                    automaticSeedPlanTriangles,
-                    automaticSeedTriangles,
+                    session.automaticSeedPlanTriangles,
+                    session.automaticSeedTriangles,
                     stepError
                 ))
             {
@@ -1151,7 +1064,7 @@ int main(int argc, char** argv)
         {
             std::string seedDisplayError;
             const std::vector<uint32_t>& currentSeeds =
-                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
+                session.activeSeeds(uiState.segmentation.automatic);
             if (syncDisplayedSeedTriangles(renderer, mesh, currentSeeds, seedDisplayError))
             {
                 activeSeedsChanged = true;
@@ -1173,34 +1086,34 @@ int main(int argc, char** argv)
             || mergeSettingsChanged;
         if (segmentationBasisChanged)
         {
-            manualSegmentMerges.clear();
-            selectedMergeTriangle.reset();
+            session.manualSegmentMerges.clear();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
         }
 
         if (previousManualSegmentMerge && !uiState.manualSegmentMerge)
         {
-            selectedMergeTriangle.reset();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
         }
 
         bool manualMergeHistoryChanged = false;
         if (uiActions.requestCancelMergeSelection)
         {
-            selectedMergeTriangle.reset();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
         }
-        if (uiActions.requestUndoManualMerge && !manualSegmentMerges.empty())
+        if (uiActions.requestUndoManualMerge && !session.manualSegmentMerges.empty())
         {
-            manualSegmentMerges.pop_back();
-            selectedMergeTriangle.reset();
+            session.manualSegmentMerges.pop_back();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
             manualMergeHistoryChanged = true;
         }
-        if (uiActions.requestResetManualMerges && !manualSegmentMerges.empty())
+        if (uiActions.requestResetManualMerges && !session.manualSegmentMerges.empty())
         {
-            manualSegmentMerges.clear();
-            selectedMergeTriangle.reset();
+            session.manualSegmentMerges.clear();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
             manualMergeHistoryChanged = true;
         }
@@ -1259,23 +1172,23 @@ int main(int argc, char** argv)
                     if (uiState.manualSegmentMerge)
                     {
                         const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-                        if (displayedTriangleLabels.size() != faceCount)
+                        if (session.displayedTriangleLabels.size() != faceCount)
                         {
                             uiState.modelLoadError = "No segmentation preview is available to merge.";
                         }
-                        else if (!selectedMergeTriangle.has_value())
+                        else if (!session.selectedMergeTriangle.has_value())
                         {
                             const uint32_t selectedLabel =
-                                displayedTriangleLabels[static_cast<std::size_t>(*pickedTriangle)];
+                                session.displayedTriangleLabels[static_cast<std::size_t>(*pickedTriangle)];
                             std::string highlightError;
                             if (renderer.setHighlightedSegment(
                                     mesh,
-                                    displayedTriangleLabels,
+                                    session.displayedTriangleLabels,
                                     selectedLabel,
                                     highlightError
                                 ))
                             {
-                                selectedMergeTriangle = *pickedTriangle;
+                                session.selectedMergeTriangle = *pickedTriangle;
                                 uiState.modelLoadError.clear();
                             }
                             else
@@ -1285,35 +1198,35 @@ int main(int argc, char** argv)
                         }
                         else
                         {
-                            const uint32_t sourceLabel = displayedTriangleLabels[
-                                static_cast<std::size_t>(*selectedMergeTriangle)
+                            const uint32_t sourceLabel = session.displayedTriangleLabels[
+                                static_cast<std::size_t>(*session.selectedMergeTriangle)
                             ];
-                            const uint32_t targetLabel = displayedTriangleLabels[
+                            const uint32_t targetLabel = session.displayedTriangleLabels[
                                 static_cast<std::size_t>(*pickedTriangle)
                             ];
                             if (sourceLabel == targetLabel)
                             {
-                                selectedMergeTriangle.reset();
+                                session.selectedMergeTriangle.reset();
                                 renderer.clearHighlightedSegment();
                                 uiState.modelLoadError.clear();
                             }
                             else
                             {
-                                std::vector<uint32_t> validationLabels = displayedTriangleLabels;
+                                std::vector<uint32_t> validationLabels = session.displayedTriangleLabels;
                                 std::string mergeError;
                                 if (segmesh::mergeAdjacentSegmentsByTriangles(
                                         mesh,
-                                        *selectedMergeTriangle,
+                                        *session.selectedMergeTriangle,
                                         *pickedTriangle,
                                         validationLabels,
                                         mergeError
                                     ))
                                 {
-                                    manualSegmentMerges.push_back({
-                                        *selectedMergeTriangle,
+                                    session.manualSegmentMerges.push_back({
+                                        *session.selectedMergeTriangle,
                                         *pickedTriangle,
                                     });
-                                    selectedMergeTriangle.reset();
+                                    session.selectedMergeTriangle.reset();
                                     renderer.clearHighlightedSegment();
                                     manualMergeHistoryChanged = true;
                                     uiState.modelLoadError.clear();
@@ -1327,10 +1240,10 @@ int main(int argc, char** argv)
                     }
                     else
                     {
-                        if (!triangleAlreadySeeded(manualSeedTriangles, *pickedTriangle))
+                        if (!triangleAlreadySeeded(session.manualSeedTriangles, *pickedTriangle))
                         {
-                            manualSegmentMerges.clear();
-                            selectedMergeTriangle.reset();
+                            session.manualSegmentMerges.clear();
+                            session.selectedMergeTriangle.reset();
                             renderer.clearHighlightedSegment();
                         }
 
@@ -1339,12 +1252,9 @@ int main(int argc, char** argv)
                                 renderer,
                                 mesh,
                                 *pickedTriangle,
-                                manualSeedTriangles,
+                                session.manualSeedTriangles,
                                 uiState,
-                                meshGeneration,
-                                randomWalkLabelCache,
-                                manualSegmentMerges,
-                                displayedTriangleLabels,
+                                session,
                                 seedError
                             ))
                         {
@@ -1365,16 +1275,13 @@ int main(int argc, char** argv)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =
-                activeSeedTriangles(manualSeedTriangles, automaticSeedTriangles, uiState.segmentation.automatic);
+                session.activeSeeds(uiState.segmentation.automatic);
             if (!refreshSegmentationPreview(
                     renderer,
                     mesh,
                     currentSeeds,
                     uiState,
-                    meshGeneration,
-                    randomWalkLabelCache,
-                    manualSegmentMerges,
-                    displayedTriangleLabels,
+                    session,
                     previewError
                 ))
             {
@@ -1389,9 +1296,9 @@ int main(int argc, char** argv)
         if (uiActions.requestClearSeed)
         {
             renderer.clearSeedTriangle();
-            manualSeedTriangles.clear();
-            manualSegmentMerges.clear();
-            selectedMergeTriangle.reset();
+            session.manualSeedTriangles.clear();
+            session.manualSegmentMerges.clear();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
             uiState.manualSegmentMerge = false;
             uiState.modelLoadError.clear();
@@ -1400,12 +1307,9 @@ int main(int argc, char** argv)
             if (!refreshSegmentationPreview(
                     renderer,
                     mesh,
-                    manualSeedTriangles,
+                    session.manualSeedTriangles,
                     uiState,
-                    meshGeneration,
-                    randomWalkLabelCache,
-                    manualSegmentMerges,
-                    displayedTriangleLabels,
+                    session,
                     previewError
                 ))
             {
@@ -1415,15 +1319,15 @@ int main(int argc, char** argv)
 
         if (uiActions.requestRandomSeed)
         {
-            const auto randomSeed = pickRandomSeedTriangle(mesh, manualSeedTriangles, randomEngine);
+            const auto randomSeed = pickRandomSeedTriangle(mesh, session.manualSeedTriangles, randomEngine);
             if (!randomSeed.has_value())
             {
                 uiState.modelLoadError = "No unseeded triangles left. Use Clear seeds to reset.";
             }
             else
             {
-                manualSegmentMerges.clear();
-                selectedMergeTriangle.reset();
+                session.manualSegmentMerges.clear();
+                session.selectedMergeTriangle.reset();
                 renderer.clearHighlightedSegment();
 
                 std::string seedError;
@@ -1431,12 +1335,9 @@ int main(int argc, char** argv)
                         renderer,
                         mesh,
                         *randomSeed,
-                        manualSeedTriangles,
+                        session.manualSeedTriangles,
                         uiState,
-                        meshGeneration,
-                        randomWalkLabelCache,
-                        manualSegmentMerges,
-                        displayedTriangleLabels,
+                        session,
                         seedError
                     ))
                 {
@@ -1449,10 +1350,10 @@ int main(int argc, char** argv)
             }
         }
 
-        if (displayedTriangleLabels.empty())
+        if (session.displayedTriangleLabels.empty())
         {
             uiState.manualSegmentMerge = false;
-            selectedMergeTriangle.reset();
+            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
         }
 

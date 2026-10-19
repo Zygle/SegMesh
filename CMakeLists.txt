@@ -173,6 +173,7 @@ add_executable(segmesh
   src/seed_selection.cpp
   src/segment_merging.cpp
   src/segmentation.cpp
+  src/segmentation_session.cpp
   src/ui.cpp
   src/main.cpp
   submods/bgfx/3rdparty/dear-imgui/imgui.cpp
