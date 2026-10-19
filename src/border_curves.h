@@ -1,8 +1,8 @@
 #pragma once
 
+#include "bezier.h"
 #include "mesh_types.h"
 
-#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -14,12 +14,6 @@ struct BorderCurveSettings
 {
     double fitTolerance = 0.01;
     double drawingTolerance = 0.001;
-};
-
-struct BorderCurveFitStats
-{
-    double maxError = 0.0;
-    double rmsError = 0.0;
 };
 
 struct BorderCurveChainStats
@@ -51,15 +45,6 @@ struct BorderCurveOverlay
     double maxFitError = 0.0;
     double rmsFitError = 0.0;
 };
-
-Float3 evaluateBezier(std::span<const Float3> controlPoints, double t);
-
-bool fitEndpointConstrainedCubic(
-    std::span<const Float3> points,
-    std::array<Float3, 4>& outControlPoints,
-    BorderCurveFitStats& outStats,
-    std::string& error
-);
 
 bool buildSegmentBorderOverlay(
     const CpuMesh& mesh,

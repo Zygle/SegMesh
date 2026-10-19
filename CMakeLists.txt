@@ -165,6 +165,7 @@ target_include_directories(bimg INTERFACE "${BIMG_DIR}/include")
 # main app
 # -------------------------
 add_executable(segmesh
+  src/bezier.cpp
   src/border_curves.cpp
   src/border_trace.cpp
   src/camera.cpp
