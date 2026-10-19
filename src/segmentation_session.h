@@ -29,6 +29,25 @@ public:
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
     void resetForMesh();
+    bool buildAutomaticSeedPlan(
+        const CpuMesh& mesh,
+        const SegmentationSettings& settings,
+        std::string& error
+    );
+    bool selectAutomaticSeedPrefix(
+        const SegmentationSettings& settings,
+        int& automaticStepSeedCount,
+        std::string& error
+    );
+    bool buildPreviewLabels(
+        const CpuMesh& mesh,
+        const SegmentationSettings& settings,
+        const std::vector<uint32_t>& seedTriangles,
+        std::vector<uint32_t>& outTriangleLabels,
+        std::vector<float>& outTriangleConfidence,
+        uint32_t& outSegmentCount,
+        std::string& error
+    );
     bool solveRawLabels(
         const CpuMesh& mesh,
         SegmentationModelType segmentationModelType,
