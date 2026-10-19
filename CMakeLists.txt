@@ -166,6 +166,7 @@ target_include_directories(bimg INTERFACE "${BIMG_DIR}/include")
 # -------------------------
 add_executable(segmesh
   src/border_curves.cpp
+  src/camera.cpp
   src/face_graph.cpp
   src/mesh_types.cpp
   src/obj_loader.cpp

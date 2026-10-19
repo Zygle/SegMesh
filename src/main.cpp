@@ -1,4 +1,5 @@
 #include "border_curves.h"
+#include "camera.h"
 #include "obj_loader.h"
 #include "renderer.h"
 #include "segmentation.h"
@@ -101,16 +102,6 @@ segmesh::Float3 rotateY(const segmesh::Float3& v, float angle)
     };
 }
 
-segmesh::Float3 cameraEyePosition(const segmesh::RendererUiState& uiState)
-{
-    const float cosPitch = std::cos(uiState.camera.pitch);
-    return {
-        std::sin(uiState.camera.yaw) * cosPitch * uiState.camera.distance,
-        std::sin(uiState.camera.pitch) * uiState.camera.distance,
-        std::cos(uiState.camera.yaw) * cosPitch * uiState.camera.distance,
-    };
-}
-
 segmesh::Float3 toFloat3(const bx::Vec3& v)
 {
     return {v.x, v.y, v.z};
@@ -196,29 +187,25 @@ std::optional<uint32_t> pickTriangleUnderCursor(
         return std::nullopt;
     }
 
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const segmesh::Float3 eyePosition = cameraEyePosition(uiState);
-    const bx::Vec3 eye{eyePosition.x, eyePosition.y, eyePosition.z};
-    const bx::Vec3 at{0.0f, 0.0f, 0.0f};
-
-    float view[16];
-    bx::mtxLookAt(view, eye, at);
-
     const bgfx::Caps* caps = bgfx::getCaps();
     if (caps == nullptr)
     {
         return std::nullopt;
     }
 
-    float proj[16];
-    bx::mtxProj(proj, 60.0f, aspect, 0.01f, 100.0f, caps->homogeneousDepth);
+    const segmesh::CameraMatrices cameraMatrices = segmesh::buildCameraMatrices(
+        uiState.camera,
+        width,
+        height,
+        caps->homogeneousDepth
+    );
 
     float invView[16];
     float invProj[16];
     float model[16];
     float invModel[16];
-    bx::mtxInverse(invView, view);
-    bx::mtxInverse(invProj, proj);
+    bx::mtxInverse(invView, cameraMatrices.view.data());
+    bx::mtxInverse(invProj, cameraMatrices.projection.data());
     bx::mtxRotateY(model, modelRotation);
     bx::mtxInverse(invModel, model);
 

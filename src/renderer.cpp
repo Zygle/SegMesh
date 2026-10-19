@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "camera.h"
 
 #include <bgfx/platform.h>
 #include <GLFW/glfw3native.h>
@@ -819,18 +820,8 @@ void Renderer::renderScene(
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303040ff, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
 
-    const float eyeX = std::sin(cameraSettings.yaw) * std::cos(cameraSettings.pitch) * cameraSettings.distance;
-    const float eyeY = std::sin(cameraSettings.pitch) * cameraSettings.distance;
-    const float eyeZ = std::cos(cameraSettings.yaw) * std::cos(cameraSettings.pitch) * cameraSettings.distance;
-
-    const bx::Vec3 eye{eyeX, eyeY, eyeZ};
-    const bx::Vec3 at{0.0f, 0.0f, 0.0f};
-    float view[16];
-    bx::mtxLookAt(view, eye, at);
-
-    float proj[16];
-    bx::mtxProj(proj, 60.0f, static_cast<float>(width) / static_cast<float>(height), 0.01f, 100.0f, caps->homogeneousDepth);
-    bgfx::setViewTransform(0, view, proj);
+    const CameraMatrices cameraMatrices = buildCameraMatrices(cameraSettings, width, height, caps->homogeneousDepth);
+    bgfx::setViewTransform(0, cameraMatrices.view.data(), cameraMatrices.projection.data());
 
     float model[16];
     bx::mtxRotateY(model, modelRotation);
@@ -842,7 +833,12 @@ void Renderer::renderScene(
     const float baseColorUniform[4] = {renderSettings.baseColor[0], renderSettings.baseColor[1], renderSettings.baseColor[2], 1.0f};
     const float lightDirUniform[4] = {lightDir.x, lightDir.y, lightDir.z, renderSettings.lightIntensity};
     const float lightColorUniform[4] = {renderSettings.lightColor[0], renderSettings.lightColor[1], renderSettings.lightColor[2], 1.0f};
-    const float cameraPosUniform[4] = {eyeX, eyeY, eyeZ, 1.0f};
+    const float cameraPosUniform[4] = {
+        cameraMatrices.eyePosition[0],
+        cameraMatrices.eyePosition[1],
+        cameraMatrices.eyePosition[2],
+        1.0f,
+    };
     const float materialUniform[4] = {renderSettings.ambientStrength, renderSettings.specularStrength, renderSettings.shininess, 1.0f};
     const float surfaceDrawParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float groupDrawParams[4] = {0.0f, renderSettings.shadeByConfidence ? 1.0f : 0.0f, 0.0f, 0.0f};
