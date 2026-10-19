@@ -168,9 +168,9 @@ add_executable(segmesh
   src/border_curves.cpp
   src/camera.cpp
   src/face_graph.cpp
-  src/mesh_types.cpp
   src/obj_loader.cpp
   src/renderer.cpp
+  src/select.cpp
   src/seed_selection.cpp
   src/segment_merging.cpp
   src/segmentation.cpp

@@ -2,8 +2,6 @@
 
 #include "segmentation_settings.h"
 
-#include <bgfx/bgfx.h>
-
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -24,10 +22,6 @@ struct MeshVertex
     float z;
     uint32_t normal;
     uint32_t confidence = 0xffffffffu;
-
-    static bgfx::VertexLayout layout;
-
-    static void initLayout();
 };
 
 struct FaceAdjacency
@@ -62,10 +56,4 @@ struct CpuMesh
     float averageMeanDifference = 1.0f;
 };
 
-struct GpuMesh
-{
-    bgfx::VertexBufferHandle vbh = BGFX_INVALID_HANDLE;
-    bgfx::IndexBufferHandle ibh = BGFX_INVALID_HANDLE;
-    uint32_t indexCount = 0;
-};
 }

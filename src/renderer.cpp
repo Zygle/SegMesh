@@ -18,6 +18,17 @@
 
 namespace
 {
+bgfx::VertexLayout g_meshVertexLayout;
+
+void initializeMeshVertexLayout()
+{
+    g_meshVertexLayout.begin()
+        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Normal, 4, bgfx::AttribType::Uint8, true, false)
+        .add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Uint8, true, false)
+        .end();
+}
+
 std::optional<std::filesystem::path> findFirstExisting(const std::vector<std::filesystem::path>& candidates)
 {
     for (const std::filesystem::path& path : candidates)
@@ -184,7 +195,7 @@ bool uploadLineMesh(
         vertices.data(),
         static_cast<uint32_t>(vertices.size() * sizeof(segmesh::MeshVertex))
     );
-    outMesh.vbh = bgfx::createVertexBuffer(vmem, segmesh::MeshVertex::layout);
+    outMesh.vbh = bgfx::createVertexBuffer(vmem, g_meshVertexLayout);
 
     const bgfx::Memory* imem = bgfx::copy(
         indices.data(),
@@ -398,7 +409,7 @@ bool Renderer::initialize(GLFWwindow* window, uint32_t width, uint32_t height, s
         return false;
     }
 
-    MeshVertex::initLayout();
+    initializeMeshVertexLayout();
 
     uBaseColor_ = bgfx::createUniform("u_baseColor", bgfx::UniformType::Vec4);
     uLightDir_ = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
@@ -424,7 +435,7 @@ bool Renderer::uploadMesh(const CpuMesh& mesh, GpuMesh& outMesh, std::string& er
         mesh.vertices.data(),
         static_cast<uint32_t>(mesh.vertices.size() * sizeof(MeshVertex))
     );
-    outMesh.vbh = bgfx::createVertexBuffer(vmem, MeshVertex::layout);
+    outMesh.vbh = bgfx::createVertexBuffer(vmem, g_meshVertexLayout);
 
     const bgfx::Memory* imem = bgfx::copy(
         mesh.indices.data(),
@@ -642,7 +653,7 @@ bool Renderer::setTriangleGroups(
         shadedVertices.data(),
         static_cast<uint32_t>(shadedVertices.size() * sizeof(MeshVertex))
     );
-    const bgfx::VertexBufferHandle newVertexBuffer = bgfx::createVertexBuffer(vmem, MeshVertex::layout);
+    const bgfx::VertexBufferHandle newVertexBuffer = bgfx::createVertexBuffer(vmem, g_meshVertexLayout);
     if (!bgfx::isValid(newVertexBuffer))
     {
         error = "Failed to create the triangle confidence vertex buffer.";

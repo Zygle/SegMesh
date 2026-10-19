@@ -13,6 +13,13 @@
 
 namespace segmesh
 {
+struct GpuMesh
+{
+    bgfx::VertexBufferHandle vbh = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle ibh = BGFX_INVALID_HANDLE;
+    uint32_t indexCount = 0;
+};
+
 class Renderer
 {
 public:
