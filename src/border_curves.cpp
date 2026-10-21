@@ -16,45 +16,6 @@
 namespace
 {
 constexpr double kCoincidentPointEpsilon = 1.0e-12;
-constexpr uint32_t kMaximumDrawingSubdivisionDepth = 12;
-
-void flattenCubicRecursive(
-    const std::array<segmesh::Float3, 4>& cubic,
-    double tolerance,
-    uint32_t depth,
-    std::vector<segmesh::Float3>& outPoints,
-    bool& outSubdivisionCapped
-)
-{
-    const double flatness = segmesh::detail::cubicFlatness(cubic);
-    if (flatness <= tolerance || depth == kMaximumDrawingSubdivisionDepth)
-    {
-        if (flatness > tolerance)
-        {
-            outSubdivisionCapped = true;
-        }
-        outPoints.push_back(cubic.back());
-        return;
-    }
-
-    std::array<segmesh::Float3, 4> left{};
-    std::array<segmesh::Float3, 4> right{};
-    segmesh::detail::splitCubicAtHalf(cubic, left, right);
-    flattenCubicRecursive(left, tolerance, depth + 1, outPoints, outSubdivisionCapped);
-    flattenCubicRecursive(right, tolerance, depth + 1, outPoints, outSubdivisionCapped);
-}
-
-std::vector<segmesh::Float3> flattenCubic(
-    const std::array<segmesh::Float3, 4>& cubic,
-    double tolerance,
-    bool& outSubdivisionCapped
-)
-{
-    std::vector<segmesh::Float3> points;
-    points.push_back(cubic.front());
-    flattenCubicRecursive(cubic, tolerance, 0, points, outSubdivisionCapped);
-    return points;
-}
 
 bool appendPolyline(
     std::span<const segmesh::Float3> points,
@@ -199,7 +160,7 @@ bool buildSegmentBorderOverlay(
         for (const detail::CubicPiece& piece : pieces)
         {
             bool pieceSubdivisionCapped = false;
-            std::vector<Float3> flattened = flattenCubic(
+            std::vector<Float3> flattened = detail::flattenCubic(
                 piece.controlPoints,
                 settings.drawingTolerance,
                 pieceSubdivisionCapped

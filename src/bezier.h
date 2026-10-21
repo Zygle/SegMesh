@@ -55,6 +55,14 @@ void splitCubicAtHalf(
     std::array<Float3, 4>& right
 );
 
+// Expects a finite non-negative tolerance and outSubdivisionCapped initialized to false.
+// Preserves both endpoints; sets the flag if the depth limit prevents meeting tolerance.
+std::vector<Float3> flattenCubic(
+    const std::array<Float3, 4>& cubic,
+    double tolerance,
+    bool& outSubdivisionCapped
+);
+
 // Expects at least two cleaned samples and an empty output vector.
 bool fitAdaptiveCubicPieces(
     std::span<const Float3> points,
