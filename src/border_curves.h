@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bezier.h"
+#include "border_trace.h"
 #include "mesh_types.h"
 
 #include <cstdint>
@@ -44,6 +45,48 @@ struct BorderCurveOverlay
     uint32_t drawingCappedChainCount = 0;
     double maxFitError = 0.0;
     double rmsFitError = 0.0;
+};
+
+// Owned by a session. Advance meshGeneration whenever mesh geometry/topology changes.
+class BorderCurveCache
+{
+public:
+    void invalidate();
+    bool buildOverlay(
+        const CpuMesh& mesh,
+        uint64_t meshGeneration,
+        std::span<const uint32_t> triangleLabels,
+        const BorderCurveSettings& settings,
+        BorderCurveOverlay& outOverlay,
+        std::string& error
+    );
+
+private:
+    struct FittedChain
+    {
+        std::vector<detail::CubicPiece> pieces;
+        BorderCurveChainStats stats;
+    };
+
+    bool fitTracedBorders(const CpuMesh& mesh, double fitTolerance, std::string& error);
+    bool sampleFittedBorders(
+        double drawingTolerance,
+        BorderCurveOverlay& outOverlay,
+        std::string& error
+    ) const;
+
+    bool traceValid_ = false;
+    bool fitValid_ = false;
+    uint64_t meshGeneration_ = 0;
+    std::vector<uint32_t> triangleLabels_;
+    std::vector<detail::TracedChain> tracedChains_;
+    uint32_t boundaryEdgeCount_ = 0;
+    double fitTolerance_ = 0.0;
+    std::vector<FittedChain> fittedChains_;
+    uint32_t skippedChainCount_ = 0;
+    uint32_t cubicPieceCount_ = 0;
+    double maxFitError_ = 0.0;
+    double rmsFitError_ = 0.0;
 };
 
 bool buildSegmentBorderOverlay(

@@ -237,6 +237,41 @@ bool rebuildAutomaticSeeds(
     );
 }
 
+bool refreshBorderPreview(
+    segmesh::Renderer& renderer,
+    const segmesh::CpuMesh& mesh,
+    const std::vector<uint32_t>& triangleLabels,
+    const segmesh::RendererUiState& uiState,
+    segmesh::SegmentationSession& session,
+    std::string& error
+)
+{
+    segmesh::BorderCurveSettings borderCurveSettings{};
+    borderCurveSettings.fitTolerance = static_cast<double>(uiState.borders.fitTolerance);
+    borderCurveSettings.drawingTolerance = static_cast<double>(uiState.borders.drawingTolerance);
+
+    segmesh::BorderCurveOverlay borderCurveOverlay;
+    if (!session.buildBorderOverlay(
+            mesh,
+            triangleLabels,
+            borderCurveSettings,
+            borderCurveOverlay,
+            error
+        ))
+    {
+        renderer.clearSegmentBorderOverlay();
+        return false;
+    }
+
+    if (!renderer.setSegmentBorderOverlay(borderCurveOverlay, error))
+    {
+        renderer.clearSegmentBorderOverlay();
+        return false;
+    }
+
+    return true;
+}
+
 bool refreshSegmentationPreview(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -286,26 +321,8 @@ bool refreshSegmentationPreview(
         return false;
     }
 
-    segmesh::BorderCurveSettings borderCurveSettings{};
-    borderCurveSettings.fitTolerance = static_cast<double>(uiState.borders.fitTolerance);
-    borderCurveSettings.drawingTolerance = static_cast<double>(uiState.borders.drawingTolerance);
-
-    segmesh::BorderCurveOverlay borderCurveOverlay;
-    if (!segmesh::buildSegmentBorderOverlay(
-            mesh,
-            triangleLabels,
-            borderCurveSettings,
-            borderCurveOverlay,
-            error
-        ))
+    if (!refreshBorderPreview(renderer, mesh, triangleLabels, uiState, session, error))
     {
-        renderer.clearSegmentBorderOverlay();
-        return false;
-    }
-
-    if (!renderer.setSegmentBorderOverlay(borderCurveOverlay, error))
-    {
-        renderer.clearSegmentBorderOverlay();
         return false;
     }
 
@@ -936,21 +953,36 @@ int main(int argc, char** argv)
             }
         }
 
-        if (previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged
-            || segmentationModelChanged || borderCurveSettingsChanged
-            || manualMergeHistoryChanged)
+        const bool segmentationPreviewChanged =
+            previewSettingsChanged || meshReloaded || activeSeedsChanged || mergeSettingsChanged
+            || segmentationModelChanged || manualMergeHistoryChanged;
+        if (segmentationPreviewChanged || borderCurveSettingsChanged)
         {
             std::string previewError;
             const std::vector<uint32_t>& currentSeeds =
                 session.activeSeeds(uiState.segmentation.automatic);
-            if (!refreshSegmentationPreview(
+            const bool refreshOnlyBorders = !segmentationPreviewChanged
+                && uiState.rendering.showSegmentation
+                && !currentSeeds.empty()
+                && session.displayedTriangleLabels.size() == mesh.indices.size() / 3;
+            const bool refreshed = refreshOnlyBorders
+                ? refreshBorderPreview(
+                    renderer,
+                    mesh,
+                    session.displayedTriangleLabels,
+                    uiState,
+                    session,
+                    previewError
+                )
+                : refreshSegmentationPreview(
                     renderer,
                     mesh,
                     currentSeeds,
                     uiState,
                     session,
                     previewError
-                ))
+                );
+            if (!refreshed)
             {
                 uiState.modelLoadError = previewError;
             }

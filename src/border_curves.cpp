@@ -1,5 +1,4 @@
 #include "border_curves.h"
-#include "border_trace.h"
 
 #include <Eigen/Core>
 
@@ -48,8 +47,23 @@ bool appendPolyline(
 
 namespace segmesh
 {
-bool buildSegmentBorderOverlay(
+void BorderCurveCache::invalidate()
+{
+    traceValid_ = false;
+    fitValid_ = false;
+    triangleLabels_.clear();
+    tracedChains_.clear();
+    fittedChains_.clear();
+    boundaryEdgeCount_ = 0;
+    skippedChainCount_ = 0;
+    cubicPieceCount_ = 0;
+    maxFitError_ = 0.0;
+    rmsFitError_ = 0.0;
+}
+
+bool BorderCurveCache::buildOverlay(
     const CpuMesh& mesh,
+    uint64_t meshGeneration,
     std::span<const uint32_t> triangleLabels,
     const BorderCurveSettings& settings,
     BorderCurveOverlay& outOverlay,
@@ -84,21 +98,51 @@ bool buildSegmentBorderOverlay(
         return false;
     }
 
-    std::vector<detail::TracedChain> tracedChains;
-    if (!detail::traceSegmentBorders(
-            mesh,
-            triangleLabels,
-            tracedChains,
-            outOverlay.boundaryEdgeCount,
-            error
+    if (!traceValid_ || meshGeneration_ != meshGeneration
+        || !std::equal(
+            triangleLabels.begin(), triangleLabels.end(),
+            triangleLabels_.begin(), triangleLabels_.end()
         ))
     {
-        return false;
+        invalidate();
+        if (!detail::traceSegmentBorders(
+                mesh, triangleLabels, tracedChains_, boundaryEdgeCount_, error
+            ))
+        {
+            return false;
+        }
+        meshGeneration_ = meshGeneration;
+        triangleLabels_.assign(triangleLabels.begin(), triangleLabels.end());
+        traceValid_ = true;
     }
 
+    if (!fitValid_ || fitTolerance_ != settings.fitTolerance)
+    {
+        fitValid_ = false;
+        if (!fitTracedBorders(mesh, settings.fitTolerance, error))
+        {
+            return false;
+        }
+        fitTolerance_ = settings.fitTolerance;
+        fitValid_ = true;
+    }
+
+    return sampleFittedBorders(settings.drawingTolerance, outOverlay, error);
+}
+
+bool BorderCurveCache::fitTracedBorders(
+    const CpuMesh& mesh,
+    double fitTolerance,
+    std::string& error
+)
+{
+    std::vector<FittedChain> fittedChains;
+    uint32_t skippedChainCount = 0;
+    uint32_t cubicPieceCount = 0;
+    double maximumFitError = 0.0;
     double totalSquaredFitError = 0.0;
     uint64_t totalFittedPointCount = 0;
-    for (const detail::TracedChain& chain : tracedChains)
+    for (const detail::TracedChain& chain : tracedChains_)
     {
         std::vector<Float3> sourcePoints;
         sourcePoints.reserve(chain.vertexIndices.size());
@@ -115,7 +159,7 @@ bool buildSegmentBorderOverlay(
         std::vector<Float3> fittedPoints = detail::removeConsecutiveCoincidentPoints(sourcePoints);
         if (fittedPoints.size() < 2)
         {
-            ++outOverlay.skippedChainCount;
+            ++skippedChainCount;
             continue;
         }
 
@@ -139,7 +183,7 @@ bool buildSegmentBorderOverlay(
         std::vector<detail::CubicPiece> pieces;
         if (!detail::fitAdaptiveCubicPieces(
                 fittedPoints,
-                settings.fitTolerance,
+                fitTolerance,
                 chainStartTangent,
                 chainEndTangent,
                 pieces,
@@ -149,20 +193,81 @@ bool buildSegmentBorderOverlay(
         }
         if (pieces.empty())
         {
-            ++outOverlay.skippedChainCount;
+            ++skippedChainCount;
             continue;
         }
 
-        std::vector<Float3> renderedPoints;
-        bool drawingSubdivisionCapped = false;
         double chainMaximumFitError = 0.0;
         double chainSquaredFitError = 0.0;
         for (const detail::CubicPiece& piece : pieces)
         {
+            chainMaximumFitError = std::max(
+                chainMaximumFitError,
+                piece.fitStats.maxError
+            );
+            const std::size_t piecePointCount = piece.lastSample - piece.firstSample + 1;
+            chainSquaredFitError += piece.fitStats.rmsError * piece.fitStats.rmsError
+                * static_cast<double>(piecePointCount);
+        }
+
+        if (pieces.size() > std::numeric_limits<uint32_t>::max()
+            || cubicPieceCount > std::numeric_limits<uint32_t>::max() - pieces.size())
+        {
+            error = "The generated border overlay exceeds 32-bit statistics limits.";
+            return false;
+        }
+        cubicPieceCount += static_cast<uint32_t>(pieces.size());
+        maximumFitError = std::max(maximumFitError, chainMaximumFitError);
+        totalSquaredFitError += chainSquaredFitError;
+        totalFittedPointCount += fittedPoints.size();
+        const double chainRmsFitError = std::sqrt(
+            chainSquaredFitError / static_cast<double>(fittedPoints.size())
+        );
+        BorderCurveChainStats stats{};
+        stats.firstLabel = chain.labels.first;
+        stats.secondLabel = chain.labels.second;
+        stats.sourcePointCount = static_cast<uint32_t>(sourcePoints.size());
+        stats.fittedPointCount = static_cast<uint32_t>(fittedPoints.size());
+        stats.cubicPieceCount = static_cast<uint32_t>(pieces.size());
+        stats.maxFitError = chainMaximumFitError;
+        stats.rmsFitError = chainRmsFitError;
+        stats.closedLoopArc = chain.closedLoopArc;
+        fittedChains.push_back({std::move(pieces), stats});
+    }
+
+    // Publish only a complete fit; drawing failures can retry sampling this result.
+    fittedChains_ = std::move(fittedChains);
+    skippedChainCount_ = skippedChainCount;
+    cubicPieceCount_ = cubicPieceCount;
+    maxFitError_ = maximumFitError;
+    rmsFitError_ = totalFittedPointCount > 0
+        ? std::sqrt(totalSquaredFitError / static_cast<double>(totalFittedPointCount))
+        : 0.0;
+    return true;
+}
+
+bool BorderCurveCache::sampleFittedBorders(
+    double drawingTolerance,
+    BorderCurveOverlay& outOverlay,
+    std::string& error
+) const
+{
+    outOverlay.boundaryEdgeCount = boundaryEdgeCount_;
+    outOverlay.skippedChainCount = skippedChainCount_;
+    outOverlay.cubicPieceCount = cubicPieceCount_;
+    outOverlay.maxFitError = maxFitError_;
+    outOverlay.rmsFitError = rmsFitError_;
+
+    for (const FittedChain& chain : fittedChains_)
+    {
+        std::vector<Float3> renderedPoints;
+        bool drawingSubdivisionCapped = false;
+        for (const detail::CubicPiece& piece : chain.pieces)
+        {
             bool pieceSubdivisionCapped = false;
             std::vector<Float3> flattened = detail::flattenCubic(
                 piece.controlPoints,
-                settings.drawingTolerance,
+                drawingTolerance,
                 pieceSubdivisionCapped
             );
             drawingSubdivisionCapped |= pieceSubdivisionCapped;
@@ -183,57 +288,38 @@ bool buildSegmentBorderOverlay(
             {
                 return false;
             }
-            chainMaximumFitError = std::max(
-                chainMaximumFitError,
-                piece.fitStats.maxError
-            );
-            const std::size_t piecePointCount = piece.lastSample - piece.firstSample + 1;
-            chainSquaredFitError += piece.fitStats.rmsError * piece.fitStats.rmsError
-                * static_cast<double>(piecePointCount);
         }
         if (!appendPolyline(renderedPoints, outOverlay.vertices, outOverlay.indices, error))
         {
             return false;
         }
-
-        if (pieces.size() > std::numeric_limits<uint32_t>::max()
-            || renderedPoints.size() > std::numeric_limits<uint32_t>::max()
-            || outOverlay.cubicPieceCount > std::numeric_limits<uint32_t>::max() - pieces.size())
+        if (renderedPoints.size() > std::numeric_limits<uint32_t>::max())
         {
             error = "The generated border overlay exceeds 32-bit statistics limits.";
             return false;
         }
-        outOverlay.cubicPieceCount += static_cast<uint32_t>(pieces.size());
+
+        BorderCurveChainStats stats = chain.stats;
+        stats.renderedPointCount = static_cast<uint32_t>(renderedPoints.size());
+        stats.drawingSubdivisionCapped = drawingSubdivisionCapped;
+        outOverlay.chains.push_back(stats);
         if (drawingSubdivisionCapped)
         {
             ++outOverlay.drawingCappedChainCount;
         }
-        outOverlay.maxFitError = std::max(outOverlay.maxFitError, chainMaximumFitError);
-        totalSquaredFitError += chainSquaredFitError;
-        totalFittedPointCount += fittedPoints.size();
-        const double chainRmsFitError = std::sqrt(
-            chainSquaredFitError / static_cast<double>(fittedPoints.size())
-        );
-        outOverlay.chains.push_back({
-            chain.labels.first,
-            chain.labels.second,
-            static_cast<uint32_t>(sourcePoints.size()),
-            static_cast<uint32_t>(fittedPoints.size()),
-            static_cast<uint32_t>(pieces.size()),
-            static_cast<uint32_t>(renderedPoints.size()),
-            chainMaximumFitError,
-            chainRmsFitError,
-            drawingSubdivisionCapped,
-            chain.closedLoopArc,
-        });
-    }
-
-    if (totalFittedPointCount > 0)
-    {
-        outOverlay.rmsFitError = std::sqrt(
-            totalSquaredFitError / static_cast<double>(totalFittedPointCount)
-        );
     }
     return true;
+}
+
+bool buildSegmentBorderOverlay(
+    const CpuMesh& mesh,
+    std::span<const uint32_t> triangleLabels,
+    const BorderCurveSettings& settings,
+    BorderCurveOverlay& outOverlay,
+    std::string& error
+)
+{
+    BorderCurveCache cache;
+    return cache.buildOverlay(mesh, 0, triangleLabels, settings, outOverlay, error);
 }
 }

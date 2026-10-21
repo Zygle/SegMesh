@@ -22,6 +22,20 @@ void SegmentationSession::resetForMesh()
     selectedMergeTriangle.reset();
     ++meshGeneration_;
     randomWalkLabelCache_.invalidate();
+    borderCurveCache_.invalidate();
+}
+
+bool SegmentationSession::buildBorderOverlay(
+    const CpuMesh& mesh,
+    std::span<const uint32_t> triangleLabels,
+    const BorderCurveSettings& settings,
+    BorderCurveOverlay& outOverlay,
+    std::string& error
+)
+{
+    return borderCurveCache_.buildOverlay(
+        mesh, meshGeneration_, triangleLabels, settings, outOverlay, error
+    );
 }
 
 bool SegmentationSession::buildAutomaticSeedPlan(

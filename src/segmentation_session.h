@@ -1,5 +1,6 @@
 #pragma once
 
+#include "border_curves.h"
 #include "segmentation_settings.h"
 
 #include <cstdint>
@@ -29,6 +30,13 @@ public:
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
     void resetForMesh();
+    bool buildBorderOverlay(
+        const CpuMesh& mesh,
+        std::span<const uint32_t> triangleLabels,
+        const BorderCurveSettings& settings,
+        BorderCurveOverlay& outOverlay,
+        std::string& error
+    );
     bool buildAutomaticSeedPlan(
         const CpuMesh& mesh,
         const SegmentationSettings& settings,
@@ -93,5 +101,6 @@ private:
 
     uint64_t meshGeneration_ = 1;
     RandomWalkLabelCache randomWalkLabelCache_;
+    BorderCurveCache borderCurveCache_;
 };
 }
