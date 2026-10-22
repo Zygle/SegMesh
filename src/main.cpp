@@ -192,7 +192,6 @@ bool syncAutomaticSeedPrefix(
 {
     if (!session.selectAutomaticSeedPrefix(
             uiState.segmentation,
-            uiState.automaticStepSeedCount,
             error
         ))
     {
@@ -562,7 +561,7 @@ int main(int argc, char** argv)
             uiState.segmentation.automaticMode;
         const int previousAutomaticSeedCount = uiState.segmentation.automaticSeedCount;
         const bool previousStepAutomaticSegmentation = uiState.segmentation.stepByStep;
-        const int previousAutomaticStepSeedCount = uiState.automaticStepSeedCount;
+        const int previousAutomaticStepSeedCount = session.automaticStepSeedCount();
         const bool previousMergeFineSegments = uiState.segmentation.mergeFineSegments;
         const int previousMergeTargetSegmentCount = uiState.segmentation.mergeTargetSegmentCount;
         const bool previousForceMergeTargetSegmentCount = uiState.segmentation.forceMergeTargetSegmentCount;
@@ -593,36 +592,31 @@ int main(int argc, char** argv)
             static_cast<uint32_t>(mesh.vertices.size()),
             static_cast<uint32_t>(mesh.indices.size() / 3),
             static_cast<uint32_t>(seedsBeforeUi.size()),
+            session.automaticStepSeedCount(),
             hasSegmentationPreview,
             selectedMergeSegment,
             static_cast<uint32_t>(session.manualSegmentMerges.size()),
             renderer.rendererName(),
             uiState
         );
-        if (uiState.segmentation.automatic && uiState.segmentation.stepByStep)
+        segmesh::AutomaticStepAction stepAction = segmesh::AutomaticStepAction::None;
+        if (uiActions.requestAutomaticStepReset)
         {
-            if (!previousStepAutomaticSegmentation)
-            {
-                uiState.automaticStepSeedCount = 1;
-            }
-            else if (uiActions.requestAutomaticStepReset)
-            {
-                uiState.automaticStepSeedCount = 1;
-            }
-            else if (uiActions.requestAutomaticStepFinish)
-            {
-                uiState.automaticStepSeedCount = session.automaticSeedPlanTriangles.empty()
-                    ? std::numeric_limits<int>::max()
-                    : static_cast<int>(session.automaticSeedPlanTriangles.size());
-            }
-            else if (uiActions.requestAutomaticStep)
-            {
-                const int currentStepSeedCount = std::max(uiState.automaticStepSeedCount, 1);
-                uiState.automaticStepSeedCount = currentStepSeedCount < std::numeric_limits<int>::max()
-                    ? currentStepSeedCount + 1
-                    : currentStepSeedCount;
-            }
+            stepAction = segmesh::AutomaticStepAction::Reset;
         }
+        else if (uiActions.requestAutomaticStepFinish)
+        {
+            stepAction = segmesh::AutomaticStepAction::Finish;
+        }
+        else if (uiActions.requestAutomaticStep)
+        {
+            stepAction = segmesh::AutomaticStepAction::Next;
+        }
+        session.updateAutomaticStep(
+            uiState.segmentation,
+            previousStepAutomaticSegmentation,
+            stepAction
+        );
         if (uiState.segmentation.automatic)
         {
             uiState.rendering.showSegmentation = true;
@@ -638,7 +632,7 @@ int main(int argc, char** argv)
         const bool automaticSeedCountChanged = uiState.segmentation.automaticSeedCount != previousAutomaticSeedCount;
         const bool automaticStepSettingsChanged =
             uiState.segmentation.stepByStep != previousStepAutomaticSegmentation
-            || uiState.automaticStepSeedCount != previousAutomaticStepSeedCount;
+            || session.automaticStepSeedCount() != previousAutomaticStepSeedCount;
         const bool mergeSettingsChanged =
             uiState.segmentation.mergeFineSegments != previousMergeFineSegments
             || uiState.segmentation.mergeTargetSegmentCount != previousMergeTargetSegmentCount

@@ -12,6 +12,7 @@ RendererUiActions drawRendererPanel(
     uint32_t vertexCount,
     uint32_t triangleCount,
     uint32_t seedTriangleCount,
+    const int automaticStepSeedCount,
     bool hasSegmentationPreview,
     int32_t selectedMergeSegment,
     uint32_t manualMergeCount,
@@ -151,7 +152,6 @@ RendererUiActions drawRendererPanel(
         ImGui::Checkbox("Step-by-step", &uiState.segmentation.stepByStep);
         if (uiState.segmentation.stepByStep)
         {
-            uiState.automaticStepSeedCount = std::max(uiState.automaticStepSeedCount, 1);
             if (ImGui::Button("Next step"))
             {
                 actions.requestAutomaticStep = true;
@@ -166,7 +166,7 @@ RendererUiActions drawRendererPanel(
             {
                 actions.requestAutomaticStepFinish = true;
             }
-            ImGui::Text("Active auto seeds: %d", uiState.automaticStepSeedCount);
+            ImGui::Text("Active auto seeds: %d", std::max(automaticStepSeedCount, 1));
         }
 
         if (uiState.segmentation.automaticMode == AutomaticSegmentationMode::Coarse)

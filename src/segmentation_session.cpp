@@ -12,8 +12,45 @@ const std::vector<uint32_t>& SegmentationSession::activeSeeds(bool automatic) co
     return automatic ? automaticSeedTriangles : manualSeedTriangles;
 }
 
+int SegmentationSession::automaticStepSeedCount() const
+{
+    return automaticStepSeedCount_;
+}
+
+void SegmentationSession::updateAutomaticStep(
+    const SegmentationSettings& settings,
+    bool previousStepByStep,
+    AutomaticStepAction action
+)
+{
+    if (!settings.automatic || !settings.stepByStep)
+    {
+        return;
+    }
+
+    automaticStepSeedCount_ = std::max(automaticStepSeedCount_, 1);
+    if (!previousStepByStep || action == AutomaticStepAction::Reset)
+    {
+        automaticStepSeedCount_ = 1;
+    }
+    else if (action == AutomaticStepAction::Finish)
+    {
+        automaticStepSeedCount_ = automaticSeedPlanTriangles.empty()
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(automaticSeedPlanTriangles.size());
+    }
+    else if (action == AutomaticStepAction::Next)
+    {
+        if (automaticStepSeedCount_ < std::numeric_limits<int>::max())
+        {
+            ++automaticStepSeedCount_;
+        }
+    }
+}
+
 void SegmentationSession::resetForMesh()
 {
+    // Keep the requested step count across mesh changes; prefix selection clamps it.
     manualSeedTriangles.clear();
     automaticSeedPlanTriangles.clear();
     automaticSeedTriangles.clear();
@@ -80,14 +117,13 @@ bool SegmentationSession::buildAutomaticSeedPlan(
 
 bool SegmentationSession::selectAutomaticSeedPrefix(
     const SegmentationSettings& settings,
-    int& automaticStepSeedCount,
     std::string& error
 )
 {
     const uint32_t planSeedCount = static_cast<uint32_t>(automaticSeedPlanTriangles.size());
     if (planSeedCount == 0)
     {
-        automaticStepSeedCount = 0;
+        automaticStepSeedCount_ = 0;
         automaticSeedTriangles.clear();
         error = "Automatic segmentation has no generated seed plan.";
         return false;
@@ -96,11 +132,11 @@ bool SegmentationSession::selectAutomaticSeedPrefix(
     uint32_t activeSeedCount = planSeedCount;
     if (settings.stepByStep)
     {
-        const uint32_t requestedSeedCount = static_cast<uint32_t>(std::max(automaticStepSeedCount, 1));
+        const uint32_t requestedSeedCount = static_cast<uint32_t>(std::max(automaticStepSeedCount_, 1));
         activeSeedCount = std::min(requestedSeedCount, planSeedCount);
     }
 
-    automaticStepSeedCount = static_cast<int>(activeSeedCount);
+    automaticStepSeedCount_ = static_cast<int>(activeSeedCount);
     automaticSeedTriangles.assign(
         automaticSeedPlanTriangles.begin(),
         automaticSeedPlanTriangles.begin() + static_cast<std::ptrdiff_t>(activeSeedCount)

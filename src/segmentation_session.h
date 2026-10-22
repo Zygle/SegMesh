@@ -18,6 +18,14 @@ struct ManualSegmentMerge
     uint32_t targetTriangle = 0;
 };
 
+enum class AutomaticStepAction
+{
+    None,
+    Next,
+    Reset,
+    Finish,
+};
+
 class SegmentationSession
 {
 public:
@@ -29,6 +37,12 @@ public:
     std::optional<uint32_t> selectedMergeTriangle;
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
+    int automaticStepSeedCount() const;
+    void updateAutomaticStep(
+        const SegmentationSettings& settings,
+        bool previousStepByStep,
+        AutomaticStepAction action
+    );
     void resetForMesh();
     bool buildBorderOverlay(
         const CpuMesh& mesh,
@@ -44,7 +58,6 @@ public:
     );
     bool selectAutomaticSeedPrefix(
         const SegmentationSettings& settings,
-        int& automaticStepSeedCount,
         std::string& error
     );
     bool buildPreviewLabels(
@@ -100,6 +113,7 @@ private:
     };
 
     uint64_t meshGeneration_ = 1;
+    int automaticStepSeedCount_ = 1;
     RandomWalkLabelCache randomWalkLabelCache_;
     BorderCurveCache borderCurveCache_;
 };

@@ -17,7 +17,6 @@ struct RendererUiState
     BorderSettings borders;
     SegmentationSettings segmentation;
 
-    int automaticStepSeedCount = 1;
     bool manualSegmentMerge = false;
     std::string modelLoadError;
 };
@@ -42,6 +41,7 @@ RendererUiActions drawRendererPanel(
     uint32_t vertexCount,
     uint32_t triangleCount,
     uint32_t seedTriangleCount,
+    int automaticStepSeedCount,
     bool hasSegmentationPreview,
     int32_t selectedMergeSegment,
     uint32_t manualMergeCount,
