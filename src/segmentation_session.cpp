@@ -140,6 +140,13 @@ void SegmentationSession::updateAutomaticStep(
     }
     else if (action == AutomaticStepAction::Next)
     {
+        // Do not signal a step change after the generated plan is exhausted:
+        // that would unnecessarily refresh the preview and clear manual merges.
+        if (!automaticSeedPlanTriangles.empty()
+            && static_cast<std::size_t>(automaticStepSeedCount_) >= automaticSeedPlanTriangles.size())
+        {
+            return;
+        }
         if (automaticStepSeedCount_ < std::numeric_limits<int>::max())
         {
             ++automaticStepSeedCount_;
