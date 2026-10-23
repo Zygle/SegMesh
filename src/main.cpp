@@ -182,6 +182,16 @@ bool syncDisplayedSeedTriangles(
     return true;
 }
 
+void clearSegmentationPreview(
+    segmesh::Renderer& renderer,
+    segmesh::SegmentationSession& session
+)
+{
+    renderer.clearTriangleGroups();
+    renderer.clearHighlightedSegment();
+    session.clearDisplayedPreview();
+}
+
 bool syncAutomaticSeedPrefix(
     segmesh::Renderer& renderer,
     const segmesh::CpuMesh& mesh,
@@ -196,7 +206,7 @@ bool syncAutomaticSeedPrefix(
         ))
     {
         renderer.clearSeedTriangle();
-        renderer.clearTriangleGroups();
+        clearSegmentationPreview(renderer, session);
         return false;
     }
 
@@ -204,7 +214,7 @@ bool syncAutomaticSeedPrefix(
     {
         session.automaticSeedTriangles.clear();
         renderer.clearSeedTriangle();
-        renderer.clearTriangleGroups();
+        clearSegmentationPreview(renderer, session);
         return false;
     }
 
@@ -223,7 +233,7 @@ bool rebuildAutomaticSeeds(
     {
         session.automaticSeedTriangles.clear();
         renderer.clearSeedTriangle();
-        renderer.clearTriangleGroups();
+        clearSegmentationPreview(renderer, session);
         return false;
     }
 
@@ -280,10 +290,11 @@ bool refreshSegmentationPreview(
     std::string& error
 )
 {
-    session.displayedTriangleLabels.clear();
+    // A full refresh either publishes a complete preview or leaves it cleared.
+    clearSegmentationPreview(renderer, session);
+    error.clear();
     if (!uiState.rendering.showSegmentation || seedTriangles.empty())
     {
-        renderer.clearTriangleGroups();
         return true;
     }
 
@@ -305,7 +316,6 @@ bool refreshSegmentationPreview(
 
     if (segmentCount == 0)
     {
-        renderer.clearTriangleGroups();
         return true;
     }
 
@@ -322,10 +332,11 @@ bool refreshSegmentationPreview(
 
     if (!refreshBorderPreview(renderer, mesh, triangleLabels, uiState, session, error))
     {
+        clearSegmentationPreview(renderer, session);
         return false;
     }
 
-    session.displayedTriangleLabels = std::move(triangleLabels);
+    session.publishPreviewLabels(std::move(triangleLabels));
     return true;
 }
 
@@ -574,7 +585,7 @@ int main(int argc, char** argv)
         const std::vector<uint32_t>& seedsBeforeUi =
             session.activeSeeds(uiState.segmentation.automatic);
         const bool hasSegmentationPreview = uiState.rendering.showSegmentation
-            && session.displayedTriangleLabels.size() == mesh.indices.size() / 3;
+            && session.displayedTriangleLabels().size() == mesh.indices.size() / 3;
         int32_t selectedMergeSegment = -1;
         const auto selectedMergeLabel = session.selectedMergeLabel();
         if (selectedMergeLabel.has_value()
@@ -743,6 +754,7 @@ int main(int argc, char** argv)
             }
             else
             {
+                clearSegmentationPreview(renderer, session);
                 uiState.modelLoadError = seedDisplayError;
             }
         }
@@ -850,7 +862,7 @@ int main(int argc, char** argv)
                             const uint32_t selectedLabel = *session.selectedMergeLabel();
                             if (renderer.setHighlightedSegment(
                                     mesh,
-                                    session.displayedTriangleLabels,
+                                    session.displayedTriangleLabels(),
                                     selectedLabel,
                                     mergeError
                                 ))
@@ -918,12 +930,12 @@ int main(int argc, char** argv)
             const bool refreshOnlyBorders = !segmentationPreviewChanged
                 && uiState.rendering.showSegmentation
                 && !currentSeeds.empty()
-                && session.displayedTriangleLabels.size() == mesh.indices.size() / 3;
+                && session.displayedTriangleLabels().size() == mesh.indices.size() / 3;
             const bool refreshed = refreshOnlyBorders
                 ? refreshBorderPreview(
                     renderer,
                     mesh,
-                    session.displayedTriangleLabels,
+                    session.displayedTriangleLabels(),
                     uiState,
                     session,
                     previewError
@@ -1001,7 +1013,7 @@ int main(int argc, char** argv)
             }
         }
 
-        if (session.displayedTriangleLabels.empty())
+        if (session.displayedTriangleLabels().empty())
         {
             uiState.manualSegmentMerge = false;
             session.cancelMergeSelection();

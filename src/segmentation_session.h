@@ -41,9 +41,12 @@ public:
     std::vector<uint32_t> manualSeedTriangles;
     std::vector<uint32_t> automaticSeedPlanTriangles;
     std::vector<uint32_t> automaticSeedTriangles;
-    std::vector<uint32_t> displayedTriangleLabels;
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
+    const std::vector<uint32_t>& displayedTriangleLabels() const;
+    void clearDisplayedPreview();
+    // Call only after the triangle groups and border overlay have been uploaded.
+    void publishPreviewLabels(std::vector<uint32_t> triangleLabels);
     std::size_t manualMergeCount() const;
     std::optional<uint32_t> selectedMergeLabel() const;
     MergePickResult handleMergePick(const CpuMesh& mesh, uint32_t triangle, std::string& error);
@@ -127,6 +130,7 @@ private:
 
     uint64_t meshGeneration_ = 1;
     int automaticStepSeedCount_ = 1;
+    std::vector<uint32_t> displayedTriangleLabels_;
     std::vector<ManualSegmentMerge> manualSegmentMerges_;
     std::optional<uint32_t> selectedMergeTriangle_;
     RandomWalkLabelCache randomWalkLabelCache_;

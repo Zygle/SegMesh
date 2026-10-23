@@ -4,12 +4,30 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <utility>
 
 namespace segmesh
 {
 const std::vector<uint32_t>& SegmentationSession::activeSeeds(bool automatic) const
 {
     return automatic ? automaticSeedTriangles : manualSeedTriangles;
+}
+
+const std::vector<uint32_t>& SegmentationSession::displayedTriangleLabels() const
+{
+    return displayedTriangleLabels_;
+}
+
+void SegmentationSession::clearDisplayedPreview()
+{
+    displayedTriangleLabels_.clear();
+    cancelMergeSelection();
+}
+
+void SegmentationSession::publishPreviewLabels(std::vector<uint32_t> triangleLabels)
+{
+    displayedTriangleLabels_ = std::move(triangleLabels);
+    cancelMergeSelection();
 }
 
 std::size_t SegmentationSession::manualMergeCount() const
@@ -20,11 +38,11 @@ std::size_t SegmentationSession::manualMergeCount() const
 std::optional<uint32_t> SegmentationSession::selectedMergeLabel() const
 {
     if (!selectedMergeTriangle_.has_value()
-        || *selectedMergeTriangle_ >= displayedTriangleLabels.size())
+        || *selectedMergeTriangle_ >= displayedTriangleLabels_.size())
     {
         return std::nullopt;
     }
-    return displayedTriangleLabels[*selectedMergeTriangle_];
+    return displayedTriangleLabels_[*selectedMergeTriangle_];
 }
 
 MergePickResult SegmentationSession::handleMergePick(
@@ -35,7 +53,7 @@ MergePickResult SegmentationSession::handleMergePick(
 {
     error.clear();
     const std::size_t faceCount = mesh.indices.size() / 3;
-    if (faceCount == 0 || displayedTriangleLabels.size() != faceCount)
+    if (faceCount == 0 || displayedTriangleLabels_.size() != faceCount)
     {
         error = "No segmentation preview is available to merge.";
         return MergePickResult::Failed;
@@ -52,13 +70,13 @@ MergePickResult SegmentationSession::handleMergePick(
         selectedMergeTriangle_ = triangle;
         return MergePickResult::Selected;
     }
-    if (displayedTriangleLabels[*selectedMergeTriangle_] == displayedTriangleLabels[triangle])
+    if (displayedTriangleLabels_[*selectedMergeTriangle_] == displayedTriangleLabels_[triangle])
     {
         cancelMergeSelection();
         return MergePickResult::Cancelled;
     }
 
-    std::vector<uint32_t> validationLabels = displayedTriangleLabels;
+    std::vector<uint32_t> validationLabels = displayedTriangleLabels_;
     if (!mergeAdjacentSegmentsByTriangles(
             mesh, *selectedMergeTriangle_, triangle, validationLabels, error
         ))
@@ -136,7 +154,7 @@ void SegmentationSession::resetForMesh()
     automaticSeedPlanTriangles.clear();
     automaticSeedTriangles.clear();
     clearManualMerges();
-    displayedTriangleLabels.clear();
+    clearDisplayedPreview();
     ++meshGeneration_;
     randomWalkLabelCache_.invalidate();
     borderCurveCache_.invalidate();
