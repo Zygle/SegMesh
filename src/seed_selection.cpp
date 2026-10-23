@@ -344,11 +344,16 @@ bool selectAutomaticSeedsCoarse(
     SegmentationModelType segmentationModelType,
     uint32_t approximateSeedCount,
     std::vector<uint32_t>& outSeedTriangles,
-    std::string& error
+    std::string& error,
+    uint32_t* outMinimumSeedCount
 )
 {
     outSeedTriangles.clear();
     error.clear();
+    if (outMinimumSeedCount != nullptr)
+    {
+        *outMinimumSeedCount = 0;
+    }
 
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
     if (faceCount == 0)
@@ -493,6 +498,10 @@ bool selectAutomaticSeedsCoarse(
         return false;
     }
 
+    if (outMinimumSeedCount != nullptr)
+    {
+        *outMinimumSeedCount = static_cast<uint32_t>(components.size());
+    }
     return true;
 }
 
@@ -501,11 +510,16 @@ bool selectAutomaticSeedsFine(
     SegmentationModelType segmentationModelType,
     uint32_t approximateSeedCount,
     std::vector<uint32_t>& outSeedTriangles,
-    std::string& error
+    std::string& error,
+    uint32_t* outMinimumSeedCount
 )
 {
     outSeedTriangles.clear();
     error.clear();
+    if (outMinimumSeedCount != nullptr)
+    {
+        *outMinimumSeedCount = 0;
+    }
 
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
     if (faceCount == 0)
@@ -631,6 +645,10 @@ bool selectAutomaticSeedsFine(
         return false;
     }
 
+    if (outMinimumSeedCount != nullptr)
+    {
+        *outMinimumSeedCount = static_cast<uint32_t>(components.size());
+    }
     return true;
 }
 

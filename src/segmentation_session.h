@@ -130,6 +130,7 @@ private:
 
     uint64_t meshGeneration_ = 1;
     int automaticStepSeedCount_ = 1;
+    uint32_t minimumAutomaticSeedCount_ = 1;
     std::vector<uint32_t> displayedTriangleLabels_;
     std::vector<ManualSegmentMerge> manualSegmentMerges_;
     std::optional<uint32_t> selectedMergeTriangle_;

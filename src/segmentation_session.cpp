@@ -127,10 +127,11 @@ void SegmentationSession::updateAutomaticStep(
         return;
     }
 
-    automaticStepSeedCount_ = std::max(automaticStepSeedCount_, 1);
+    const int minimumStepSeedCount = static_cast<int>(std::max(minimumAutomaticSeedCount_, 1u));
+    automaticStepSeedCount_ = std::max(automaticStepSeedCount_, minimumStepSeedCount);
     if (!previousStepByStep || action == AutomaticStepAction::Reset)
     {
-        automaticStepSeedCount_ = 1;
+        automaticStepSeedCount_ = minimumStepSeedCount;
     }
     else if (action == AutomaticStepAction::Finish)
     {
@@ -159,6 +160,7 @@ void SegmentationSession::resetForMesh()
     // Keep the requested step count across mesh changes; prefix selection clamps it.
     manualSeedTriangles.clear();
     automaticSeedPlanTriangles.clear();
+    minimumAutomaticSeedCount_ = 1;
     automaticSeedTriangles.clear();
     clearManualMerges();
     clearDisplayedPreview();
@@ -197,7 +199,8 @@ bool SegmentationSession::buildAutomaticSeedPlan(
             settings.model,
             targetSeedCount,
             automaticSeedPlanTriangles,
-            error
+            error,
+            &minimumAutomaticSeedCount_
         );
     }
     else
@@ -207,7 +210,8 @@ bool SegmentationSession::buildAutomaticSeedPlan(
             settings.model,
             targetSeedCount,
             automaticSeedPlanTriangles,
-            error
+            error,
+            &minimumAutomaticSeedCount_
         );
     }
 
@@ -238,7 +242,11 @@ bool SegmentationSession::selectAutomaticSeedPrefix(
     if (settings.stepByStep)
     {
         const uint32_t requestedSeedCount = static_cast<uint32_t>(std::max(automaticStepSeedCount_, 1));
-        activeSeedCount = std::min(requestedSeedCount, planSeedCount);
+        // Every active prefix must include the initial seed for each component.
+        activeSeedCount = std::min(
+            std::max(requestedSeedCount, minimumAutomaticSeedCount_),
+            planSeedCount
+        );
     }
 
     automaticStepSeedCount_ = static_cast<int>(activeSeedCount);

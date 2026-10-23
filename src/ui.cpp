@@ -167,6 +167,7 @@ RendererUiActions drawRendererPanel(
                 actions.requestAutomaticStepFinish = true;
             }
             ImGui::Text("Active auto seeds: %d", std::max(automaticStepSeedCount, 1));
+            ImGui::TextWrapped("Each disconnected part starts with a seed.");
         }
 
         if (uiState.segmentation.automaticMode == AutomaticSegmentationMode::Coarse)
