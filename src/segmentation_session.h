@@ -3,6 +3,7 @@
 #include "border_curves.h"
 #include "segmentation_settings.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -26,17 +27,29 @@ enum class AutomaticStepAction
     Finish,
 };
 
+enum class MergePickResult
+{
+    Selected,
+    Cancelled,
+    Merged,
+    Failed,
+};
+
 class SegmentationSession
 {
 public:
     std::vector<uint32_t> manualSeedTriangles;
     std::vector<uint32_t> automaticSeedPlanTriangles;
     std::vector<uint32_t> automaticSeedTriangles;
-    std::vector<ManualSegmentMerge> manualSegmentMerges;
     std::vector<uint32_t> displayedTriangleLabels;
-    std::optional<uint32_t> selectedMergeTriangle;
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
+    std::size_t manualMergeCount() const;
+    std::optional<uint32_t> selectedMergeLabel() const;
+    MergePickResult handleMergePick(const CpuMesh& mesh, uint32_t triangle, std::string& error);
+    void cancelMergeSelection();
+    bool undoManualMerge();
+    void clearManualMerges();
     int automaticStepSeedCount() const;
     void updateAutomaticStep(
         const SegmentationSettings& settings,
@@ -114,6 +127,8 @@ private:
 
     uint64_t meshGeneration_ = 1;
     int automaticStepSeedCount_ = 1;
+    std::vector<ManualSegmentMerge> manualSegmentMerges_;
+    std::optional<uint32_t> selectedMergeTriangle_;
     RandomWalkLabelCache randomWalkLabelCache_;
     BorderCurveCache borderCurveCache_;
 };

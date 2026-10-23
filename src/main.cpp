@@ -576,14 +576,11 @@ int main(int argc, char** argv)
         const bool hasSegmentationPreview = uiState.rendering.showSegmentation
             && session.displayedTriangleLabels.size() == mesh.indices.size() / 3;
         int32_t selectedMergeSegment = -1;
-        if (session.selectedMergeTriangle.has_value()
-            && *session.selectedMergeTriangle < session.displayedTriangleLabels.size()
-            && session.displayedTriangleLabels[*session.selectedMergeTriangle]
-                <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
+        const auto selectedMergeLabel = session.selectedMergeLabel();
+        if (selectedMergeLabel.has_value()
+            && *selectedMergeLabel <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
         {
-            selectedMergeSegment = static_cast<int32_t>(
-                session.displayedTriangleLabels[*session.selectedMergeTriangle]
-            );
+            selectedMergeSegment = static_cast<int32_t>(*selectedMergeLabel);
         }
         const segmesh::RendererUiActions uiActions = segmesh::drawRendererPanel(
             modelPaths,
@@ -595,7 +592,7 @@ int main(int argc, char** argv)
             session.automaticStepSeedCount(),
             hasSegmentationPreview,
             selectedMergeSegment,
-            static_cast<uint32_t>(session.manualSegmentMerges.size()),
+            static_cast<uint32_t>(session.manualMergeCount()),
             renderer.rendererName(),
             uiState
         );
@@ -760,34 +757,30 @@ int main(int argc, char** argv)
             || mergeSettingsChanged;
         if (segmentationBasisChanged)
         {
-            session.manualSegmentMerges.clear();
-            session.selectedMergeTriangle.reset();
+            session.clearManualMerges();
             renderer.clearHighlightedSegment();
         }
 
         if (previousManualSegmentMerge && !uiState.manualSegmentMerge)
         {
-            session.selectedMergeTriangle.reset();
+            session.cancelMergeSelection();
             renderer.clearHighlightedSegment();
         }
 
         bool manualMergeHistoryChanged = false;
         if (uiActions.requestCancelMergeSelection)
         {
-            session.selectedMergeTriangle.reset();
+            session.cancelMergeSelection();
             renderer.clearHighlightedSegment();
         }
-        if (uiActions.requestUndoManualMerge && !session.manualSegmentMerges.empty())
+        if (uiActions.requestUndoManualMerge && session.undoManualMerge())
         {
-            session.manualSegmentMerges.pop_back();
-            session.selectedMergeTriangle.reset();
             renderer.clearHighlightedSegment();
             manualMergeHistoryChanged = true;
         }
-        if (uiActions.requestResetManualMerges && !session.manualSegmentMerges.empty())
+        if (uiActions.requestResetManualMerges && session.manualMergeCount() > 0)
         {
-            session.manualSegmentMerges.clear();
-            session.selectedMergeTriangle.reset();
+            session.clearManualMerges();
             renderer.clearHighlightedSegment();
             manualMergeHistoryChanged = true;
         }
@@ -849,79 +842,46 @@ int main(int argc, char** argv)
                 {
                     if (uiState.manualSegmentMerge)
                     {
-                        const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-                        if (session.displayedTriangleLabels.size() != faceCount)
+                        std::string mergeError;
+                        const segmesh::MergePickResult result =
+                            session.handleMergePick(mesh, *pickedTriangle, mergeError);
+                        if (result == segmesh::MergePickResult::Selected)
                         {
-                            uiState.modelLoadError = "No segmentation preview is available to merge.";
-                        }
-                        else if (!session.selectedMergeTriangle.has_value())
-                        {
-                            const uint32_t selectedLabel =
-                                session.displayedTriangleLabels[static_cast<std::size_t>(*pickedTriangle)];
-                            std::string highlightError;
+                            const uint32_t selectedLabel = *session.selectedMergeLabel();
                             if (renderer.setHighlightedSegment(
                                     mesh,
                                     session.displayedTriangleLabels,
                                     selectedLabel,
-                                    highlightError
+                                    mergeError
                                 ))
                             {
-                                session.selectedMergeTriangle = *pickedTriangle;
                                 uiState.modelLoadError.clear();
                             }
                             else
                             {
-                                uiState.modelLoadError = highlightError;
+                                session.cancelMergeSelection();
+                                uiState.modelLoadError = mergeError;
                             }
+                        }
+                        else if (result == segmesh::MergePickResult::Failed)
+                        {
+                            uiState.modelLoadError = mergeError;
                         }
                         else
                         {
-                            const uint32_t sourceLabel = session.displayedTriangleLabels[
-                                static_cast<std::size_t>(*session.selectedMergeTriangle)
-                            ];
-                            const uint32_t targetLabel = session.displayedTriangleLabels[
-                                static_cast<std::size_t>(*pickedTriangle)
-                            ];
-                            if (sourceLabel == targetLabel)
+                            renderer.clearHighlightedSegment();
+                            if (result == segmesh::MergePickResult::Merged)
                             {
-                                session.selectedMergeTriangle.reset();
-                                renderer.clearHighlightedSegment();
-                                uiState.modelLoadError.clear();
+                                manualMergeHistoryChanged = true;
                             }
-                            else
-                            {
-                                std::vector<uint32_t> validationLabels = session.displayedTriangleLabels;
-                                std::string mergeError;
-                                if (segmesh::mergeAdjacentSegmentsByTriangles(
-                                        mesh,
-                                        *session.selectedMergeTriangle,
-                                        *pickedTriangle,
-                                        validationLabels,
-                                        mergeError
-                                    ))
-                                {
-                                    session.manualSegmentMerges.push_back({
-                                        *session.selectedMergeTriangle,
-                                        *pickedTriangle,
-                                    });
-                                    session.selectedMergeTriangle.reset();
-                                    renderer.clearHighlightedSegment();
-                                    manualMergeHistoryChanged = true;
-                                    uiState.modelLoadError.clear();
-                                }
-                                else
-                                {
-                                    uiState.modelLoadError = mergeError;
-                                }
-                            }
+                            uiState.modelLoadError.clear();
                         }
                     }
                     else
                     {
                         if (!triangleAlreadySeeded(session.manualSeedTriangles, *pickedTriangle))
                         {
-                            session.manualSegmentMerges.clear();
-                            session.selectedMergeTriangle.reset();
+                            session.clearManualMerges();
                             renderer.clearHighlightedSegment();
                         }
 
@@ -990,8 +950,7 @@ int main(int argc, char** argv)
         {
             renderer.clearSeedTriangle();
             session.manualSeedTriangles.clear();
-            session.manualSegmentMerges.clear();
-            session.selectedMergeTriangle.reset();
+            session.clearManualMerges();
             renderer.clearHighlightedSegment();
             uiState.manualSegmentMerge = false;
             uiState.modelLoadError.clear();
@@ -1019,8 +978,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                session.manualSegmentMerges.clear();
-                session.selectedMergeTriangle.reset();
+                session.clearManualMerges();
                 renderer.clearHighlightedSegment();
 
                 std::string seedError;
@@ -1046,7 +1004,7 @@ int main(int argc, char** argv)
         if (session.displayedTriangleLabels.empty())
         {
             uiState.manualSegmentMerge = false;
-            session.selectedMergeTriangle.reset();
+            session.cancelMergeSelection();
             renderer.clearHighlightedSegment();
         }
 

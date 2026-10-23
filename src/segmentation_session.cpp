@@ -12,6 +12,87 @@ const std::vector<uint32_t>& SegmentationSession::activeSeeds(bool automatic) co
     return automatic ? automaticSeedTriangles : manualSeedTriangles;
 }
 
+std::size_t SegmentationSession::manualMergeCount() const
+{
+    return manualSegmentMerges_.size();
+}
+
+std::optional<uint32_t> SegmentationSession::selectedMergeLabel() const
+{
+    if (!selectedMergeTriangle_.has_value()
+        || *selectedMergeTriangle_ >= displayedTriangleLabels.size())
+    {
+        return std::nullopt;
+    }
+    return displayedTriangleLabels[*selectedMergeTriangle_];
+}
+
+MergePickResult SegmentationSession::handleMergePick(
+    const CpuMesh& mesh,
+    uint32_t triangle,
+    std::string& error
+)
+{
+    error.clear();
+    const std::size_t faceCount = mesh.indices.size() / 3;
+    if (faceCount == 0 || displayedTriangleLabels.size() != faceCount)
+    {
+        error = "No segmentation preview is available to merge.";
+        return MergePickResult::Failed;
+    }
+    if (triangle >= faceCount
+        || (selectedMergeTriangle_.has_value() && *selectedMergeTriangle_ >= faceCount))
+    {
+        error = "Selected triangle index is out of range.";
+        return MergePickResult::Failed;
+    }
+
+    if (!selectedMergeTriangle_.has_value())
+    {
+        selectedMergeTriangle_ = triangle;
+        return MergePickResult::Selected;
+    }
+    if (displayedTriangleLabels[*selectedMergeTriangle_] == displayedTriangleLabels[triangle])
+    {
+        cancelMergeSelection();
+        return MergePickResult::Cancelled;
+    }
+
+    std::vector<uint32_t> validationLabels = displayedTriangleLabels;
+    if (!mergeAdjacentSegmentsByTriangles(
+            mesh, *selectedMergeTriangle_, triangle, validationLabels, error
+        ))
+    {
+        return MergePickResult::Failed;
+    }
+
+    manualSegmentMerges_.push_back({*selectedMergeTriangle_, triangle});
+    cancelMergeSelection();
+    return MergePickResult::Merged;
+}
+
+void SegmentationSession::cancelMergeSelection()
+{
+    selectedMergeTriangle_.reset();
+}
+
+bool SegmentationSession::undoManualMerge()
+{
+    if (manualSegmentMerges_.empty())
+    {
+        return false;
+    }
+    manualSegmentMerges_.pop_back();
+    cancelMergeSelection();
+    return true;
+}
+
+void SegmentationSession::clearManualMerges()
+{
+    manualSegmentMerges_.clear();
+    cancelMergeSelection();
+}
+
 int SegmentationSession::automaticStepSeedCount() const
 {
     return automaticStepSeedCount_;
@@ -54,9 +135,8 @@ void SegmentationSession::resetForMesh()
     manualSeedTriangles.clear();
     automaticSeedPlanTriangles.clear();
     automaticSeedTriangles.clear();
-    manualSegmentMerges.clear();
+    clearManualMerges();
     displayedTriangleLabels.clear();
-    selectedMergeTriangle.reset();
     ++meshGeneration_;
     randomWalkLabelCache_.invalidate();
     borderCurveCache_.invalidate();
@@ -209,7 +289,7 @@ bool SegmentationSession::buildPreviewLabels(
         }
     }
 
-    for (const ManualSegmentMerge& merge : manualSegmentMerges)
+    for (const ManualSegmentMerge& merge : manualSegmentMerges_)
     {
         if (!segmesh::mergeAdjacentSegmentsByTriangles(
                 mesh,
