@@ -271,10 +271,12 @@ bool SegmentationSession::buildPreviewLabels(
         return false;
     }
 
+    // Seed generation can produce fewer seeds than requested. The full generated
+    // plan completes stepping and enables the final Fine merge/cleanup passes.
     const bool automaticStepInProgress =
         settings.automatic
         && settings.stepByStep
-        && static_cast<int>(seedTriangles.size()) < std::max(settings.automaticSeedCount, 1);
+        && seedTriangles.size() < automaticSeedPlanTriangles.size();
 
     if (settings.automatic && settings.automaticMode == AutomaticSegmentationMode::Fine
         && settings.mergeFineSegments && !automaticStepInProgress)
