@@ -259,6 +259,8 @@ std::vector<double> computeFineSeedImportance(
         const segmesh::FaceAdjacency& adjacency = mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)];
 
         double variationSum = 0.0;
+        double gaussianVariationSum = 0.0;
+        double meanVariationSum = 0.0;
         double concavitySum = 0.0;
         double edgeLengthSum = 0.0;
         uint32_t neighborCount = 0;
@@ -276,6 +278,17 @@ std::vector<double> computeFineSeedImportance(
                 static_cast<uint32_t>(neighborIndex)
             );
             variationSum += normalDifference;
+            if (segmentationModelType == segmesh::SegmentationModelType::Engineering)
+            {
+                gaussianVariationSum += std::abs(
+                    static_cast<double>(mesh.faceGaussianCurvatures[faceIndex])
+                    - static_cast<double>(mesh.faceGaussianCurvatures[neighborIndex])
+                );
+                meanVariationSum += std::abs(
+                    static_cast<double>(mesh.faceMeanCurvatures[faceIndex])
+                    - static_cast<double>(mesh.faceMeanCurvatures[neighborIndex])
+                );
+            }
             concavitySum += static_cast<double>(adjacency.concavityScales[edgeSlot]);
             edgeLengthSum += static_cast<double>(adjacency.edgeLengths[edgeSlot]);
             ++neighborCount;
@@ -287,20 +300,34 @@ std::vector<double> computeFineSeedImportance(
             neighborCount > 0 ? edgeLengthSum / static_cast<double>(neighborCount) : 0.0;
         const double radialDistance =
             std::sqrt(squaredDistance(mesh.faceCentroids[static_cast<std::size_t>(faceIndex)], meshCentroid)) / maxRadius;
-        const double engineeringVariation =
-            (std::abs(static_cast<double>(mesh.faceGaussianCurvatures[static_cast<std::size_t>(faceIndex)]))
-                / std::max(static_cast<double>(mesh.averageGaussianDifference), 1.0e-12))
-            + (std::abs(static_cast<double>(mesh.faceMeanCurvatures[static_cast<std::size_t>(faceIndex)]))
-                / std::max(static_cast<double>(mesh.averageMeanDifference), 1.0e-12));
+        if (segmentationModelType == segmesh::SegmentationModelType::Engineering)
+        {
+            // Compare local changes with global changes, not absolute curvature
+            // with its derivative. Constant-curvature patches should not saturate.
+            const double divisor = static_cast<double>(std::max(neighborCount, 1u));
+            const double gaussianVariation = gaussianVariationSum / divisor
+                / std::max(static_cast<double>(mesh.averageGaussianDifference), 1.0e-12);
+            const double meanVariation = meanVariationSum / divisor
+                / std::max(static_cast<double>(mesh.averageMeanDifference), 1.0e-12);
+            const double scaledNormalVariation = normalVariation
+                / std::max(static_cast<double>(mesh.averageEngineeringNormalDifference), 1.0e-12);
+            const auto boundedFeature = [](double value) { return value / (1.0 + value); };
+            // Keep feature preference secondary to surface coverage (importance 1..1.75).
+            importance[faceIndex] = 1.0 + 0.25 * (
+                boundedFeature(scaledNormalVariation)
+                + boundedFeature(gaussianVariation)
+                + boundedFeature(meanVariation)
+            );
+            continue;
+        }
 
         const double faceArea =
             faceIndex < mesh.faceAreas.size() ? std::max(static_cast<double>(mesh.faceAreas[faceIndex]), 1.0e-12) : averageArea;
         const double areaWeight = std::sqrt(faceArea / averageArea);
 
         // Sec. 4.2.1: bias dense seeds toward protrusions and locally featured regions.
-        const double featureBias = segmentationModelType == segmesh::SegmentationModelType::Graphical
-            ? 1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0)
-            : 1.0 + 1.5 * normalVariation + 1.25 * engineeringVariation + 0.4 * radialDistance;
+        const double featureBias =
+            1.0 + 3.0 * normalVariation + 0.75 * radialDistance + 0.5 * std::max(concavityBias - 0.2, 0.0);
         const double spacingBias = 0.5 + 0.5 * std::clamp(areaWeight * (1.0 + averageEdgeLength), 0.0, 2.0);
         importance[static_cast<std::size_t>(faceIndex)] =
             std::clamp(featureBias * spacingBias, kFineSeedMinImportance, kFineSeedMaxImportance);
@@ -567,6 +594,12 @@ bool selectAutomaticSeedsFine(
     outSeedTriangles.reserve(targetSeedCount);
 
     const std::vector<double> importance = computeFineSeedImportance(mesh, segmentationModelType);
+    const bool engineering = segmentationModelType == SegmentationModelType::Engineering;
+    // Engineering transition costs may be very large at sharp edges. Using them
+    // as sampling distances can spend the seed budget on tiny isolated patches.
+    const FaceDistanceMetric samplingMetric = engineering
+        ? FaceDistanceMetric::GeodesicLength
+        : FaceDistanceMetric::FeatureWeightedGeodesic;
     std::vector<bool> isSeed(faceCount, false);
     std::vector<double> minDistances(faceCount, std::numeric_limits<double>::infinity());
     std::vector<double> distances(faceCount, std::numeric_limits<double>::infinity());
@@ -575,14 +608,16 @@ bool selectAutomaticSeedsFine(
     for (std::size_t componentIndex = 0; componentIndex < components.size(); ++componentIndex)
     {
         const std::vector<uint32_t>& componentFaces = components[componentIndex];
-        const uint32_t initialSeed = mostImportantFace(componentFaces, importance, isSeed);
+        const uint32_t initialSeed = engineering
+            ? faceClosestToComponentCentroid(mesh, componentFaces)
+            : mostImportantFace(componentFaces, importance, isSeed);
         outSeedTriangles.push_back(initialSeed);
         isSeed[static_cast<std::size_t>(initialSeed)] = true;
 
         runFaceDijkstra(
             mesh,
             segmentationModelType,
-            FaceDistanceMetric::FeatureWeightedGeodesic,
+            samplingMetric,
             initialSeed,
             static_cast<int32_t>(componentIndex),
             componentIds,
@@ -636,7 +671,7 @@ bool selectAutomaticSeedsFine(
         runFaceDijkstra(
             mesh,
             segmentationModelType,
-            FaceDistanceMetric::FeatureWeightedGeodesic,
+            samplingMetric,
             nextSeed,
             componentId,
             componentIds,

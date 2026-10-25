@@ -310,24 +310,12 @@ bool mergeSmallSegmentsByTriangleCount(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,
     uint32_t minTriangleCount,
-    uint32_t minimumSegmentCount,
-    double maxRelativeMergeCost,
     std::vector<uint32_t>& inOutTriangleLabels,
     std::string& error
 )
 {
     error.clear();
 
-    if (minimumSegmentCount == 0)
-    {
-        error = "Small-segment cleanup must keep at least one segment.";
-        return false;
-    }
-    if (!(maxRelativeMergeCost >= 0.0))
-    {
-        error = "Cleanup cost limit must be non-negative.";
-        return false;
-    }
     if (minTriangleCount <= 1)
     {
         return true;
@@ -352,39 +340,65 @@ bool mergeSmallSegmentsByTriangleCount(
         return false;
     }
 
-    // Count actual regions even when earlier operations left gaps in label IDs.
-    densifySegmentLabels(inOutTriangleLabels);
+    // A label can contain several disconnected patches. Measure and merge each
+    // patch separately so a large region cannot conceal a tiny island.
+    constexpr uint32_t unassigned = std::numeric_limits<uint32_t>::max();
+    std::vector<uint32_t> faceComponents(faceCount, unassigned);
+    std::vector<uint32_t> componentLabels;
+    std::vector<uint32_t> segmentSizes;
+    std::vector<uint32_t> parents;
+    std::vector<uint32_t> pending;
+    for (uint32_t face = 0; face < faceCount; ++face)
+    {
+        if (faceComponents[face] != unassigned)
+        {
+            continue;
+        }
+
+        const uint32_t component = static_cast<uint32_t>(componentLabels.size());
+        const uint32_t label = inOutTriangleLabels[face];
+        componentLabels.push_back(label);
+        segmentSizes.push_back(0);
+        parents.push_back(component);
+        pending.clear();
+        pending.push_back(face);
+        faceComponents[face] = component;
+        for (std::size_t next = 0; next < pending.size(); ++next)
+        {
+            const uint32_t current = pending[next];
+            ++segmentSizes[component];
+            for (const int32_t neighbor : mesh.faceAdjacency[current].neighbors)
+            {
+                if (neighbor < 0)
+                {
+                    continue;
+                }
+                const uint32_t adjacent = static_cast<uint32_t>(neighbor);
+                if (faceComponents[adjacent] == unassigned && inOutTriangleLabels[adjacent] == label)
+                {
+                    faceComponents[adjacent] = component;
+                    pending.push_back(adjacent);
+                }
+            }
+        }
+    }
+
+    const uint32_t componentCount = static_cast<uint32_t>(componentLabels.size());
     for (;;)
     {
-        uint32_t segmentCount = 0;
-        for (const uint32_t label : inOutTriangleLabels)
-        {
-            segmentCount = std::max(segmentCount, label + 1);
-        }
-        if (segmentCount <= minimumSegmentCount)
-        {
-            return true;
-        }
-
-        std::vector<uint32_t> segmentSizes(segmentCount, 0);
-        for (const uint32_t label : inOutTriangleLabels)
-        {
-            ++segmentSizes[label];
-        }
-
         struct NeighborStats
         {
             double sharedDifference = 0.0;
             double sharedLength = 0.0;
         };
 
-        std::vector<std::unordered_map<uint32_t, NeighborStats> > neighborStats(segmentCount);
-        std::vector<double> boundaryDifference(segmentCount, 0.0);
-        std::vector<double> boundaryLength(segmentCount, 0.0);
+        std::vector<std::unordered_map<uint32_t, NeighborStats> > neighborStats(componentCount);
+        std::vector<double> boundaryDifference(componentCount, 0.0);
+        std::vector<double> boundaryLength(componentCount, 0.0);
         for (const FaceGraphEdgeInfo& edge : edges)
         {
-            const uint32_t label0 = inOutTriangleLabels[edge.face0];
-            const uint32_t label1 = inOutTriangleLabels[edge.face1];
+            const uint32_t label0 = findSegmentRoot(parents, faceComponents[edge.face0]);
+            const uint32_t label1 = findSegmentRoot(parents, faceComponents[edge.face1]);
             if (label0 == label1)
             {
                 continue;
@@ -407,7 +421,7 @@ bool mergeSmallSegmentsByTriangleCount(
         // and finally label IDs so unordered-map iteration cannot break ties.
         using Candidate = std::tuple<uint32_t, double, double, uint32_t, uint32_t>;
         std::optional<Candidate> best;
-        for (uint32_t source = 0; source < segmentCount; ++source)
+        for (uint32_t source = 0; source < componentCount; ++source)
         {
             if (segmentSizes[source] == 0 || segmentSizes[source] >= minTriangleCount)
             {
@@ -423,11 +437,10 @@ bool mergeSmallSegmentsByTriangleCount(
                     boundaryDifference[target],
                     boundaryLength[target]
                 );
-                if (!cost.has_value() || *cost > maxRelativeMergeCost)
-                {
-                    continue;
-                }
-                const Candidate candidate{segmentSizes[source], *cost, -stats.sharedLength, source, target};
+                // Cleanup enforces size independently of the general merge
+                // budget. Boundary cost ranks neighbors rather than vetoing it.
+                const double neighborCost = cost.value_or(stats.sharedDifference / stats.sharedLength);
+                const Candidate candidate{segmentSizes[source], neighborCost, -stats.sharedLength, source, target};
                 if (!best.has_value() || candidate < *best)
                 {
                     best = candidate;
@@ -436,20 +449,34 @@ bool mergeSmallSegmentsByTriangleCount(
         }
         if (!best.has_value())
         {
-            return true;
+            break;
         }
 
         const uint32_t source = std::get<3>(*best);
         const uint32_t target = std::get<4>(*best);
-        for (uint32_t& label : inOutTriangleLabels)
+        parents[source] = target;
+        segmentSizes[target] += segmentSizes[source];
+        segmentSizes[source] = 0;
+        // Relabeling the source can connect several patches of the target label.
+        // Join them now so their combined size is used in subsequent cleanup.
+        for (const auto& [neighbor, stats] : neighborStats[source])
         {
-            if (label == source)
+            (void)stats;
+            if (neighbor != target && componentLabels[neighbor] == componentLabels[target])
             {
-                label = target;
+                parents[neighbor] = target;
+                segmentSizes[target] += segmentSizes[neighbor];
+                segmentSizes[neighbor] = 0;
             }
         }
-        densifySegmentLabels(inOutTriangleLabels);
     }
+
+    for (uint32_t face = 0; face < faceCount; ++face)
+    {
+        inOutTriangleLabels[face] = componentLabels[findSegmentRoot(parents, faceComponents[face])];
+    }
+    densifySegmentLabels(inOutTriangleLabels);
+    return true;
 }
 
 bool mergeAdjacentSegmentsByTriangles(

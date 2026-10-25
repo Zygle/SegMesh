@@ -852,7 +852,12 @@ void Renderer::renderScene(
     };
     const float materialUniform[4] = {renderSettings.ambientStrength, renderSettings.specularStrength, renderSettings.shininess, 1.0f};
     const float surfaceDrawParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const float groupDrawParams[4] = {0.0f, renderSettings.shadeByConfidence ? 1.0f : 0.0f, 0.0f, 0.0f};
+    const float groupDrawParams[4] = {
+        0.0f,
+        renderSettings.shadeByConfidence ? 1.0f : 0.0f,
+        renderSettings.confidenceContrast,
+        0.0f,
+    };
     const float borderDrawParams[4] = {2.0e-6f, 0.0f, 0.0f, 0.0f};
 
     const uint64_t state = BGFX_STATE_WRITE_RGB

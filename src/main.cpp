@@ -602,6 +602,8 @@ int main(int argc, char** argv)
             static_cast<uint32_t>(seedsBeforeUi.size()),
             session.automaticStepSeedCount(),
             hasSegmentationPreview,
+            session.displayedRegionCount(),
+            session.displayedTinyRegionCount(),
             selectedMergeSegment,
             static_cast<uint32_t>(session.manualMergeCount()),
             renderer.rendererName(),

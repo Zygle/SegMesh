@@ -43,6 +43,8 @@ RendererUiActions drawRendererPanel(
     uint32_t seedTriangleCount,
     int automaticStepSeedCount,
     bool hasSegmentationPreview,
+    uint32_t displayedRegionCount,
+    uint32_t displayedTinyRegionCount,
     int32_t selectedMergeSegment,
     uint32_t manualMergeCount,
     const char* rendererName,

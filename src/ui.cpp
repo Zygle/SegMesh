@@ -14,6 +14,8 @@ RendererUiActions drawRendererPanel(
     uint32_t seedTriangleCount,
     const int automaticStepSeedCount,
     bool hasSegmentationPreview,
+    uint32_t displayedRegionCount,
+    uint32_t displayedTinyRegionCount,
     int32_t selectedMergeSegment,
     uint32_t manualMergeCount,
     const char* rendererName,
@@ -88,7 +90,17 @@ RendererUiActions drawRendererPanel(
     ImGui::Checkbox("Preview segmentation", &uiState.rendering.showSegmentation);
     ImGui::BeginDisabled(!uiState.rendering.showSegmentation);
     ImGui::Checkbox("Shade by confidence", &uiState.rendering.shadeByConfidence);
+    if (uiState.rendering.shadeByConfidence)
+    {
+        ImGui::SliderFloat("Confidence contrast", &uiState.rendering.confidenceContrast, 0.25f, 1.5f, "%.2f");
+        ImGui::TextWrapped("Pale: less certain. Darker: more certain.");
+    }
     ImGui::EndDisabled();
+    if (hasSegmentationPreview && uiState.rendering.showSegmentation)
+    {
+        ImGui::Text("Regions: %u", displayedRegionCount);
+        ImGui::Text("Regions with 1-3 triangles: %u", displayedTinyRegionCount);
+    }
     ImGui::Checkbox("Segment borders", &uiState.borders.visible);
     if (uiState.borders.visible)
     {
@@ -177,7 +189,9 @@ RendererUiActions drawRendererPanel(
         }
         else
         {
-            ImGui::TextUnformatted("Fine mode uses feature-biased dense auto seeding.");
+            ImGui::TextWrapped(uiState.segmentation.model == SegmentationModelType::Engineering
+                ? "Fine mode spreads seeds across the surface with a bounded feature preference."
+                : "Fine mode uses feature-biased dense auto seeding.");
             ImGui::Checkbox("Merge fine segments", &uiState.segmentation.mergeFineSegments);
             if (uiState.segmentation.mergeFineSegments)
             {
@@ -190,13 +204,13 @@ RendererUiActions drawRendererPanel(
             ImGui::Checkbox("Cleanup small segments", &uiState.segmentation.cleanupSmallFineSegments);
             if (uiState.segmentation.cleanupSmallFineSegments)
             {
-                uiState.segmentation.minFineSegmentTriangles = std::clamp(uiState.segmentation.minFineSegmentTriangles, 2, 128);
-                ImGui::SliderInt("Min triangles", &uiState.segmentation.minFineSegmentTriangles, 2, 128);
+                uiState.segmentation.minFineSegmentTriangles = std::clamp(uiState.segmentation.minFineSegmentTriangles, 2, 4096);
+                ImGui::SliderInt("Min triangles", &uiState.segmentation.minFineSegmentTriangles, 2, 4096, "%d", ImGuiSliderFlags_Logarithmic);
+                ImGui::TextWrapped("Cleanup can go below the target count and cross strong boundaries to remove small patches.");
             }
             const bool forceTarget = uiState.segmentation.mergeFineSegments
                 && uiState.segmentation.forceMergeTargetSegmentCount;
-            if ((uiState.segmentation.mergeFineSegments || uiState.segmentation.cleanupSmallFineSegments)
-                && !forceTarget)
+            if (uiState.segmentation.mergeFineSegments && !forceTarget)
             {
                 ImGui::SliderFloat("Merge cost limit", &uiState.segmentation.mergeCostThreshold, 0.05f, 2.0f);
             }

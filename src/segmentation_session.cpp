@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <limits>
 #include <utility>
+#include <unordered_map>
 
 namespace segmesh
 {
@@ -18,14 +19,41 @@ const std::vector<uint32_t>& SegmentationSession::displayedTriangleLabels() cons
     return displayedTriangleLabels_;
 }
 
+uint32_t SegmentationSession::displayedRegionCount() const
+{
+    return displayedRegionCount_;
+}
+
+uint32_t SegmentationSession::displayedTinyRegionCount() const
+{
+    return displayedTinyRegionCount_;
+}
+
 void SegmentationSession::clearDisplayedPreview()
 {
     displayedTriangleLabels_.clear();
+    displayedRegionCount_ = 0;
+    displayedTinyRegionCount_ = 0;
     cancelMergeSelection();
 }
 
 void SegmentationSession::publishPreviewLabels(std::vector<uint32_t> triangleLabels)
 {
+    // Count occupied labels, not max(label) + 1: manual merges can leave gaps.
+    std::unordered_map<uint32_t, uint32_t> triangleCounts;
+    for (const uint32_t label : triangleLabels)
+    {
+        ++triangleCounts[label];
+    }
+    displayedRegionCount_ = static_cast<uint32_t>(triangleCounts.size());
+    displayedTinyRegionCount_ = 0;
+    for (const auto& entry : triangleCounts)
+    {
+        if (entry.second <= 3)
+        {
+            ++displayedTinyRegionCount_;
+        }
+    }
     displayedTriangleLabels_ = std::move(triangleLabels);
     cancelMergeSelection();
 }
@@ -296,12 +324,10 @@ bool SegmentationSession::buildPreviewLabels(
             ? std::numeric_limits<double>::infinity()
             : static_cast<double>(settings.mergeCostThreshold);
 
-        // Give small regions priority within the same count and cost budget.
-        if (settings.cleanupSmallFineSegments
-            && !segmesh::mergeSmallSegmentsByTriangleCount(
+        if (settings.mergeFineSegments
+            && !segmesh::mergeSegmentsByBoundaryCost(
                 mesh,
                 settings.model,
-                static_cast<uint32_t>(std::max(settings.minFineSegmentTriangles, 2)),
                 minimumSegmentCount,
                 mergeCostLimit,
                 outTriangleLabels,
@@ -311,12 +337,13 @@ bool SegmentationSession::buildPreviewLabels(
             return false;
         }
 
-        if (settings.mergeFineSegments
-            && !segmesh::mergeSegmentsByBoundaryCost(
+        // Finish with size cleanup even if ordinary merging reached its count
+        // or cost limit. Detached mesh parts have no neighbor and are retained.
+        if (settings.cleanupSmallFineSegments
+            && !segmesh::mergeSmallSegmentsByTriangleCount(
                 mesh,
                 settings.model,
-                minimumSegmentCount,
-                mergeCostLimit,
+                static_cast<uint32_t>(std::max(settings.minFineSegmentTriangles, 2)),
                 outTriangleLabels,
                 error
             ))

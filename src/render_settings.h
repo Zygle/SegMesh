@@ -31,6 +31,7 @@ struct RenderSettings
 
     bool showSegmentation = false;
     bool shadeByConfidence = false;
+    float confidenceContrast = 1.0f;
 };
 
 struct BorderSettings

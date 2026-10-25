@@ -44,6 +44,8 @@ public:
 
     const std::vector<uint32_t>& activeSeeds(bool automatic) const;
     const std::vector<uint32_t>& displayedTriangleLabels() const;
+    uint32_t displayedRegionCount() const;
+    uint32_t displayedTinyRegionCount() const;
     void clearDisplayedPreview();
     // Call only after the triangle groups and border overlay have been uploaded.
     void publishPreviewLabels(std::vector<uint32_t> triangleLabels);
@@ -132,6 +134,8 @@ private:
     int automaticStepSeedCount_ = 1;
     uint32_t minimumAutomaticSeedCount_ = 1;
     std::vector<uint32_t> displayedTriangleLabels_;
+    uint32_t displayedRegionCount_ = 0;
+    uint32_t displayedTinyRegionCount_ = 0;
     std::vector<ManualSegmentMerge> manualSegmentMerges_;
     std::optional<uint32_t> selectedMergeTriangle_;
     RandomWalkLabelCache randomWalkLabelCache_;
