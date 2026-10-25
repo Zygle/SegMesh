@@ -18,7 +18,7 @@ struct FaceGraphEdgeInfo
     double difference = 0.0;
 };
 
-double faceNormalDot(const CpuMesh& mesh, uint32_t faceIndex, uint32_t neighborIndex);
+double faceNormalDifference(const CpuMesh& mesh, uint32_t faceIndex, uint32_t neighborIndex);
 
 double edgeDifferenceForMode(
     const CpuMesh& mesh,
@@ -26,6 +26,13 @@ double edgeDifferenceForMode(
     uint32_t faceIndex,
     std::size_t edgeSlot,
     uint32_t neighborIndex
+);
+
+// Validate inputs before component traversals or numerical graph construction.
+bool validateFaceGraphData(
+    const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
+    std::string& error
 );
 
 bool buildFaceGraphEdges(

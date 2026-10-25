@@ -270,12 +270,12 @@ std::vector<double> computeFineSeedImportance(
                 continue;
             }
 
-            const double normalDot = segmesh::detail::faceNormalDot(
+            const double normalDifference = segmesh::detail::faceNormalDifference(
                 mesh,
                 faceIndex,
                 static_cast<uint32_t>(neighborIndex)
             );
-            variationSum += 1.0 - normalDot;
+            variationSum += normalDifference;
             concavitySum += static_cast<double>(adjacency.concavityScales[edgeSlot]);
             edgeLengthSum += static_cast<double>(adjacency.edgeLengths[edgeSlot]);
             ++neighborCount;
@@ -372,6 +372,11 @@ bool selectAutomaticSeedsCoarse(
         || mesh.faceAdjacency.size() != faceCount)
     {
         error = "Mesh topology data is incomplete. Reload the mesh before auto-segmenting.";
+        return false;
+    }
+
+    if (!detail::validateFaceGraphData(mesh, segmentationModelType, error))
+    {
         return false;
     }
 
@@ -538,6 +543,11 @@ bool selectAutomaticSeedsFine(
         || mesh.faceAdjacency.size() != faceCount)
     {
         error = "Mesh topology data is incomplete. Reload the mesh before auto-segmenting.";
+        return false;
+    }
+
+    if (!detail::validateFaceGraphData(mesh, segmentationModelType, error))
+    {
         return false;
     }
 

@@ -4,18 +4,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
 constexpr double kCoplanarNormalDifferenceEpsilon = 1.0e-8;
 constexpr double kCoplanarPlaneDistanceEpsilon = 1.0e-7;
-
-double dot(const segmesh::Float3& a, const segmesh::Float3& b)
-{
-    return static_cast<double>(a.x) * static_cast<double>(b.x)
-        + static_cast<double>(a.y) * static_cast<double>(b.y)
-        + static_cast<double>(a.z) * static_cast<double>(b.z);
-}
 
 Eigen::Vector3d toVector3d(const segmesh::Float3& value)
 {
@@ -66,8 +60,8 @@ bool areFacesGeometricallyCoplanar(
         return false;
     }
 
-    const Eigen::Vector3d faceNormal = toVector3d(mesh.faceNormals[static_cast<std::size_t>(faceIndex)]);
-    const Eigen::Vector3d neighborNormal = toVector3d(mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]);
+    const Eigen::Vector3d faceNormal = toVector3d(mesh.faceNormals[static_cast<std::size_t>(faceIndex)]).normalized();
+    const Eigen::Vector3d neighborNormal = toVector3d(mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]).normalized();
     const Eigen::Vector3d p0 = triangleVertexPosition(mesh, faceIndex, 0);
     const Eigen::Vector3d p1 = triangleVertexPosition(mesh, faceIndex, 1);
     const Eigen::Vector3d p2 = triangleVertexPosition(mesh, faceIndex, 2);
@@ -100,16 +94,18 @@ bool areFacesGeometricallyCoplanar(
 
 namespace segmesh::detail
 {
-double faceNormalDot(const CpuMesh& mesh, uint32_t faceIndex, uint32_t neighborIndex)
+double faceNormalDifference(const CpuMesh& mesh, uint32_t faceIndex, uint32_t neighborIndex)
 {
-    return std::clamp(
-        dot(
-            mesh.faceNormals[static_cast<std::size_t>(faceIndex)],
-            mesh.faceNormals[static_cast<std::size_t>(neighborIndex)]
-        ),
-        -1.0,
-        1.0
-    );
+    const Eigen::Vector3d first = toVector3d(mesh.faceNormals[faceIndex]);
+    const Eigen::Vector3d second = toVector3d(mesh.faceNormals[neighborIndex]);
+    if (!first.allFinite() || !second.allFinite()
+        || first.squaredNorm() == 0.0 || second.squaredNorm() == 0.0)
+    {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    // Equivalent to 1 - dot for unit normals, without cancellation near coplanarity.
+    return std::clamp(0.5 * (first.normalized() - second.normalized()).squaredNorm(), 0.0, 2.0);
 }
 
 double edgeDifferenceForMode(
@@ -120,17 +116,16 @@ double edgeDifferenceForMode(
     uint32_t neighborIndex
 )
 {
-    const double normalDot = faceNormalDot(mesh, faceIndex, neighborIndex);
+    const double rawNormalDifference = faceNormalDifference(mesh, faceIndex, neighborIndex);
 
     if (segmentationModelType == segmesh::SegmentationModelType::Graphical)
     {
         const double rawDifference =
             static_cast<double>(mesh.faceAdjacency[static_cast<std::size_t>(faceIndex)].concavityScales[edgeSlot])
-            * (1.0 - normalDot);
+            * rawNormalDifference;
         return rawDifference / std::max(static_cast<double>(mesh.averageGraphicalDifference), 1.0e-12);
     }
 
-    const double rawNormalDifference = 1.0 - normalDot;
     const double normalDifference = rawNormalDifference
         / std::max(static_cast<double>(mesh.averageEngineeringNormalDifference), 1.0e-12);
     if (areFacesGeometricallyCoplanar(mesh, faceIndex, neighborIndex, rawNormalDifference))
@@ -151,6 +146,85 @@ double edgeDifferenceForMode(
     return std::max({normalDifference, gaussianDifference, meanDifference});
 }
 
+bool validateFaceGraphData(
+    const CpuMesh& mesh,
+    SegmentationModelType segmentationModelType,
+    std::string& error
+)
+{
+    error.clear();
+    const std::size_t faceCount = mesh.indices.size() / 3;
+    if (mesh.indices.size() % 3 != 0
+        || faceCount > static_cast<std::size_t>(std::numeric_limits<int32_t>::max())
+        || mesh.faceNormals.size() != faceCount || mesh.faceAdjacency.size() != faceCount)
+    {
+        error = "Mesh topology data is incomplete or exceeds the supported face count.";
+        return false;
+    }
+
+    const bool engineering = segmentationModelType == SegmentationModelType::Engineering;
+    if (engineering && (mesh.faceGaussianCurvatures.size() != faceCount
+        || mesh.faceMeanCurvatures.size() != faceCount))
+    {
+        error = "Mesh curvature data is incomplete.";
+        return false;
+    }
+    const auto validScale = [](float value) { return std::isfinite(value) && value > 0.0f; };
+    if ((!engineering && !validScale(mesh.averageGraphicalDifference))
+        || (engineering && (!validScale(mesh.averageEngineeringNormalDifference)
+            || !validScale(mesh.averageGaussianDifference) || !validScale(mesh.averageMeanDifference))))
+    {
+        error = "Mesh difference normalization must be finite and positive.";
+        return false;
+    }
+
+    for (const uint32_t vertex : mesh.indices)
+    {
+        if (vertex >= mesh.vertices.size())
+        {
+            error = "Mesh contains an out-of-range vertex index.";
+            return false;
+        }
+    }
+    for (std::size_t face = 0; face < faceCount; ++face)
+    {
+        const Eigen::Vector3d normal = toVector3d(mesh.faceNormals[face]);
+        if (!normal.allFinite() || normal.squaredNorm() == 0.0)
+        {
+            error = "Mesh contains a non-finite or zero-length face normal.";
+            return false;
+        }
+        if (engineering && (!std::isfinite(mesh.faceGaussianCurvatures[face])
+            || !std::isfinite(mesh.faceMeanCurvatures[face])))
+        {
+            error = "Mesh contains non-finite curvature values.";
+            return false;
+        }
+        const FaceAdjacency& adjacency = mesh.faceAdjacency[face];
+        for (std::size_t slot = 0; slot < adjacency.neighbors.size(); ++slot)
+        {
+            const int32_t neighbor = adjacency.neighbors[slot];
+            if (neighbor < 0)
+            {
+                continue;
+            }
+            if (static_cast<std::size_t>(neighbor) >= faceCount
+                || static_cast<std::size_t>(neighbor) == face)
+            {
+                error = "Mesh adjacency contains an invalid neighboring face.";
+                return false;
+            }
+            if (!std::isfinite(adjacency.edgeLengths[slot]) || adjacency.edgeLengths[slot] < 0.0f
+                || !std::isfinite(adjacency.concavityScales[slot]) || adjacency.concavityScales[slot] < 0.0f)
+            {
+                error = "Mesh adjacency contains an invalid edge length or concavity scale.";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool buildFaceGraphEdges(
     const segmesh::CpuMesh& mesh,
     segmesh::SegmentationModelType segmentationModelType,
@@ -164,9 +238,8 @@ bool buildFaceGraphEdges(
     error.clear();
 
     const uint32_t faceCount = static_cast<uint32_t>(mesh.indices.size() / 3);
-    if (mesh.faceNormals.size() != faceCount || mesh.faceAdjacency.size() != faceCount)
+    if (!validateFaceGraphData(mesh, segmentationModelType, error))
     {
-        error = "Mesh topology data is incomplete. Reload the mesh before segmenting.";
         return false;
     }
 
@@ -185,18 +258,18 @@ bool buildFaceGraphEdges(
 
             const double difference =
                 edgeDifferenceForMode(mesh, segmentationModelType, faceIndex, edgeSlot, static_cast<uint32_t>(neighborIndex));
+            if (!std::isfinite(difference) || difference < 0.0)
+            {
+                error = "Mesh graph contains a non-finite or negative edge difference.";
+                return false;
+            }
             const double edgeLength = std::max(static_cast<double>(adjacency.edgeLengths[edgeSlot]), 1.0e-12);
 
             outEdges.push_back({faceIndex, static_cast<uint32_t>(neighborIndex), edgeLength, difference});
         }
     }
 
-    if (outEdges.empty())
-    {
-        error = "The mesh face graph has no adjacency edges to solve over.";
-        return false;
-    }
-
+    // Disconnected isolated faces form a valid graph with no merge candidates.
     outAverageDifference = 1.0;
     return true;
 }

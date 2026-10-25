@@ -134,7 +134,7 @@ std::optional<uint32_t> pickTriangleUnderCursor(
 
     const float ndcX = static_cast<float>(((mouseFramebufferX + 0.5) / static_cast<double>(width)) * 2.0 - 1.0);
     const float ndcY = static_cast<float>(1.0 - ((mouseFramebufferY + 0.5) / static_cast<double>(height)) * 2.0);
-    const float nearClipZ = homogeneousDepth ? 0.0f : -1.0f;
+    const float nearClipZ = homogeneousDepth ? -1.0f : 0.0f;
 
     const bx::Vec3 nearClip{ndcX, ndcY, nearClipZ};
     const bx::Vec3 farClip{ndcX, ndcY, 1.0f};

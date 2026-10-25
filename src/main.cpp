@@ -570,7 +570,7 @@ int main(int argc, char** argv)
         const segmesh::SegmentationModelType previousSegmentationModelType = uiState.segmentation.model;
         const segmesh::AutomaticSegmentationMode previousAutomaticSegmentationMode =
             uiState.segmentation.automaticMode;
-        const int previousAutomaticSeedCount = uiState.segmentation.automaticSeedCount;
+        const int previousAutomaticSeedCount = uiState.segmentation.automaticSeedCount();
         const bool previousStepAutomaticSegmentation = uiState.segmentation.stepByStep;
         const int previousAutomaticStepSeedCount = session.automaticStepSeedCount();
         const bool previousMergeFineSegments = uiState.segmentation.mergeFineSegments;
@@ -637,7 +637,7 @@ int main(int argc, char** argv)
             uiState.segmentation.automaticMode != previousAutomaticSegmentationMode;
         const bool segmentationModelChanged =
             uiState.segmentation.model != previousSegmentationModelType;
-        const bool automaticSeedCountChanged = uiState.segmentation.automaticSeedCount != previousAutomaticSeedCount;
+        const bool automaticSeedCountChanged = uiState.segmentation.automaticSeedCount() != previousAutomaticSeedCount;
         const bool automaticStepSettingsChanged =
             uiState.segmentation.stepByStep != previousStepAutomaticSegmentation
             || session.automaticStepSeedCount() != previousAutomaticStepSeedCount;

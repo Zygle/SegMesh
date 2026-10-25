@@ -143,12 +143,13 @@ RendererUiActions drawRendererPanel(
         ImGui::Combo("Auto mode", &autoMode, autoModeLabels, IM_ARRAYSIZE(autoModeLabels));
         uiState.segmentation.automaticMode = static_cast<AutomaticSegmentationMode>(autoMode);
 
+        int& automaticSeedCount = uiState.segmentation.automaticSeedCount();
         const int minSeedCount =
             uiState.segmentation.automaticMode == AutomaticSegmentationMode::Fine ? 20 : 1;
         const int maxSeedCount =
             uiState.segmentation.automaticMode == AutomaticSegmentationMode::Fine ? 200 : 64;
-        uiState.segmentation.automaticSeedCount = std::clamp(uiState.segmentation.automaticSeedCount, minSeedCount, maxSeedCount);
-        ImGui::SliderInt("Auto seed target", &uiState.segmentation.automaticSeedCount, minSeedCount, maxSeedCount);
+        automaticSeedCount = std::clamp(automaticSeedCount, minSeedCount, maxSeedCount);
+        ImGui::SliderInt("Auto seed target", &automaticSeedCount, minSeedCount, maxSeedCount);
         ImGui::Checkbox("Step-by-step", &uiState.segmentation.stepByStep);
         if (uiState.segmentation.stepByStep)
         {
@@ -180,15 +181,11 @@ RendererUiActions drawRendererPanel(
             ImGui::Checkbox("Merge fine segments", &uiState.segmentation.mergeFineSegments);
             if (uiState.segmentation.mergeFineSegments)
             {
-                const int maxMergedSegmentCount = std::max(uiState.segmentation.automaticSeedCount, 1);
+                const int maxMergedSegmentCount = std::max(automaticSeedCount, 1);
                 uiState.segmentation.mergeTargetSegmentCount =
                     std::clamp(uiState.segmentation.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
                 ImGui::SliderInt("Target regions", &uiState.segmentation.mergeTargetSegmentCount, 1, maxMergedSegmentCount);
                 ImGui::Checkbox("Force target regions", &uiState.segmentation.forceMergeTargetSegmentCount);
-                if (!uiState.segmentation.forceMergeTargetSegmentCount)
-                {
-                    ImGui::SliderFloat("Merge cost limit", &uiState.segmentation.mergeCostThreshold, 0.05f, 2.0f);
-                }
             }
             ImGui::Checkbox("Cleanup small segments", &uiState.segmentation.cleanupSmallFineSegments);
             if (uiState.segmentation.cleanupSmallFineSegments)
@@ -196,7 +193,14 @@ RendererUiActions drawRendererPanel(
                 uiState.segmentation.minFineSegmentTriangles = std::clamp(uiState.segmentation.minFineSegmentTriangles, 2, 128);
                 ImGui::SliderInt("Min triangles", &uiState.segmentation.minFineSegmentTriangles, 2, 128);
             }
-            if (uiState.segmentation.forceMergeTargetSegmentCount)
+            const bool forceTarget = uiState.segmentation.mergeFineSegments
+                && uiState.segmentation.forceMergeTargetSegmentCount;
+            if ((uiState.segmentation.mergeFineSegments || uiState.segmentation.cleanupSmallFineSegments)
+                && !forceTarget)
+            {
+                ImGui::SliderFloat("Merge cost limit", &uiState.segmentation.mergeCostThreshold, 0.05f, 2.0f);
+            }
+            if (forceTarget)
             {
                 ImGui::TextUnformatted("Force target can merge across strong boundaries to reach the requested count.");
             }

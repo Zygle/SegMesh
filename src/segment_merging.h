@@ -21,6 +21,8 @@ bool mergeSmallSegmentsByTriangleCount(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,
     uint32_t minTriangleCount,
+    uint32_t minimumSegmentCount,
+    double maxRelativeMergeCost,
     std::vector<uint32_t>& inOutTriangleLabels,
     std::string& error
 );

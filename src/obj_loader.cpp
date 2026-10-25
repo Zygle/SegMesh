@@ -1,4 +1,5 @@
 #include "obj_loader.h"
+#include "face_graph.h"
 
 #include <Eigen/Dense>
 #include <OpenMesh/Core/IO/MeshIO.hh>
@@ -390,7 +391,13 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
         const Eigen::Vector3f p1 = preprocessedPositions[faceVertices[1].idx()];
         const Eigen::Vector3f p2 = preprocessedPositions[faceVertices[2].idx()];
         const Eigen::Vector3f centroid = (p0 + p1 + p2) / 3.0f;
-        const Eigen::Vector3f faceNormal = normalizeSafe(toEigen(mesh.normal(fh)));
+        const Eigen::Vector3d rawFaceNormal = toEigen(mesh.normal(fh)).cast<double>();
+        if (!rawFaceNormal.allFinite() || rawFaceNormal.squaredNorm() == 0.0)
+        {
+            error = "OBJ contains a non-finite or zero-length face normal: " + filePath.string();
+            return false;
+        }
+        const Eigen::Vector3f faceNormal = rawFaceNormal.normalized().cast<float>();
         const float area = 0.5f * ((p1 - p0).cross(p2 - p0)).norm();
 
         const uint32_t i0 = static_cast<uint32_t>(outMesh.vertices.size());
@@ -508,14 +515,9 @@ bool loadObjMesh(const std::filesystem::path& filePath, CpuMesh& outMesh, std::s
                 continue;
             }
 
-            const double normalDot = std::clamp(
-                static_cast<double>(outMesh.faceNormals[faceIndex].x) * static_cast<double>(outMesh.faceNormals[neighborIndex].x)
-                    + static_cast<double>(outMesh.faceNormals[faceIndex].y) * static_cast<double>(outMesh.faceNormals[neighborIndex].y)
-                    + static_cast<double>(outMesh.faceNormals[faceIndex].z) * static_cast<double>(outMesh.faceNormals[neighborIndex].z),
-                -1.0,
-                1.0
+            const double rawNormalDifference = detail::faceNormalDifference(
+                outMesh, static_cast<uint32_t>(faceIndex), static_cast<uint32_t>(neighborIndex)
             );
-            const double rawNormalDifference = 1.0 - normalDot;
 
             graphicalDifferenceSum += static_cast<double>(adjacency.concavityScales[edgeSlot]) * rawNormalDifference;
             engineeringNormalDifferenceSum += rawNormalDifference;

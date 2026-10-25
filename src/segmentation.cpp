@@ -8,12 +8,75 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace
 {
 using segmesh::detail::FaceGraphEdgeInfo;
 using segmesh::detail::buildFaceGraphEdges;
+
+constexpr double kProbabilityTolerance = 1.0e-6;
+constexpr double kProbabilitySumTolerance = 1.0e-5;
+constexpr double kScaledResidualTolerance = 1.0e-8;
+
+bool validateProbabilities(
+    const Eigen::SparseMatrix<double>& laplacian,
+    const Eigen::MatrixXd& rhs,
+    const Eigen::MatrixXd& probabilities,
+    std::string& error
+)
+{
+    if (!probabilities.allFinite())
+    {
+        error = "Segmentation solve produced a non-finite probability.";
+        return false;
+    }
+    for (Eigen::Index row = 0; row < probabilities.rows(); ++row)
+    {
+        if (probabilities.row(row).minCoeff() < -kProbabilityTolerance
+            || probabilities.row(row).maxCoeff() > 1.0 + kProbabilityTolerance)
+        {
+            error = "Segmentation probabilities are outside zero to one beyond roundoff tolerance.";
+            return false;
+        }
+        if (std::abs(probabilities.row(row).sum() - 1.0) > kProbabilitySumTolerance)
+        {
+            error = "Segmentation probabilities do not sum to one within tolerance.";
+            return false;
+        }
+    }
+
+    Eigen::VectorXd rowSums = Eigen::VectorXd::Zero(laplacian.rows());
+    for (Eigen::Index outer = 0; outer < laplacian.outerSize(); ++outer)
+    {
+        for (Eigen::SparseMatrix<double>::InnerIterator entry(laplacian, outer); entry; ++entry)
+        {
+            rowSums(entry.row()) += std::abs(entry.value());
+        }
+    }
+    const double matrixInfinityNorm = rowSums.maxCoeff();
+    // Check columns separately to avoid allocating another full face-by-seed matrix.
+    for (Eigen::Index column = 0; column < probabilities.cols(); ++column)
+    {
+        const Eigen::VectorXd residual = laplacian * probabilities.col(column) - rhs.col(column);
+        const double scale = matrixInfinityNorm * probabilities.col(column).lpNorm<Eigen::Infinity>()
+            + rhs.col(column).lpNorm<Eigen::Infinity>();
+        if (!residual.allFinite() || !std::isfinite(scale))
+        {
+            error = "Segmentation residual calculation produced a non-finite value.";
+            return false;
+        }
+        const double scaledResidual = residual.lpNorm<Eigen::Infinity>()
+            / std::max(scale, std::numeric_limits<double>::min());
+        if (!std::isfinite(scaledResidual) || scaledResidual > kScaledResidualTolerance)
+        {
+            error = "Segmentation solve residual exceeds the numerical tolerance.";
+            return false;
+        }
+    }
+    return true;
+}
 
 bool componentHasSeed(
     const segmesh::CpuMesh& mesh,
@@ -79,9 +142,8 @@ bool segmentMeshRandomWalk(
         return false;
     }
 
-    if (mesh.faceNormals.size() != faceCount || mesh.faceAdjacency.size() != faceCount)
+    if (!detail::validateFaceGraphData(mesh, segmentationModelType, error))
     {
-        error = "Mesh topology data is incomplete. Reload the mesh before segmenting.";
         return false;
     }
 
@@ -220,6 +282,11 @@ bool segmentMeshRandomWalk(
 
     for (uint32_t row = 0; row < unknownCount; ++row)
     {
+        if (!std::isfinite(diagonal[row]) || diagonal[row] <= 0.0)
+        {
+            error = "Random-walk system contains an invalid diagonal weight.";
+            return false;
+        }
         // Eq. (2)
         // sum_j w_ij (x_i - x_j) = 0 for each non-seed face.
         triplets.emplace_back(
@@ -244,10 +311,20 @@ bool segmentMeshRandomWalk(
         return false;
     }
 
+    if (!solver.vectorD().allFinite() || solver.vectorD().minCoeff() <= 0.0)
+    {
+        error = "Random-walk system is not numerically positive definite.";
+        return false;
+    }
+
     const Eigen::MatrixXd probabilities = solver.solve(rhs);
     if (solver.info() != Eigen::Success)
     {
         error = "Failed to solve the random-walk sparse system.";
+        return false;
+    }
+    if (!validateProbabilities(laplacian, rhs, probabilities, error))
+    {
         return false;
     }
 
@@ -269,12 +346,6 @@ bool segmentMeshRandomWalk(
         Eigen::Index bestLabel = 0;
         probabilities.row(rowIndex).maxCoeff(&bestLabel);
         const double bestValue = probabilities(rowIndex, bestLabel);
-        if (!std::isfinite(bestValue))
-        {
-            error = "Segmentation solve produced a non-finite probability.";
-            return false;
-        }
-
         outTriangleLabels[static_cast<std::size_t>(faceIndex)] = static_cast<uint32_t>(bestLabel);
         outTriangleConfidence[static_cast<std::size_t>(faceIndex)] =
             static_cast<float>(std::clamp(bestValue, 0.0, 1.0));

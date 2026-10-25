@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <queue>
 #include <tuple>
 #include <unordered_map>
@@ -16,6 +17,47 @@ namespace
 {
 using segmesh::detail::FaceGraphEdgeInfo;
 using segmesh::detail::buildFaceGraphEdges;
+
+constexpr double kBoundaryEpsilon = 1.0e-12;
+
+// Eq. (14), shared by general merging and small-region cleanup.
+std::optional<double> relativeBoundaryCost(
+    double commonDifference,
+    double commonLength,
+    double boundaryDifferenceA,
+    double boundaryLengthA,
+    double boundaryDifferenceB,
+    double boundaryLengthB
+)
+{
+    const double unionDifference = boundaryDifferenceA + boundaryDifferenceB - commonDifference;
+    const double unionLength = boundaryLengthA + boundaryLengthB - commonLength;
+    if (!std::isfinite(commonDifference) || !std::isfinite(commonLength)
+        || !std::isfinite(unionDifference) || !std::isfinite(unionLength)
+        || commonDifference < 0.0 || unionDifference < 0.0
+        || commonLength <= kBoundaryEpsilon || unionLength <= kBoundaryEpsilon)
+    {
+        return std::nullopt;
+    }
+
+    const double commonAverage = commonDifference / commonLength;
+    const double unionAverage = unionDifference / unionLength;
+    if (!std::isfinite(commonAverage) || !std::isfinite(unionAverage))
+    {
+        return std::nullopt;
+    }
+    if (commonAverage <= kBoundaryEpsilon && unionAverage <= kBoundaryEpsilon)
+    {
+        return 0.0;
+    }
+    if (unionAverage <= kBoundaryEpsilon)
+    {
+        return std::nullopt;
+    }
+
+    const double cost = commonAverage / unionAverage;
+    return std::isfinite(cost) && cost >= 0.0 ? std::optional<double>(cost) : std::nullopt;
+}
 
 uint32_t findSegmentRoot(std::vector<uint32_t>& parents, uint32_t segment)
 {
@@ -93,6 +135,12 @@ bool mergeSegmentsByBoundaryCost(
     if (targetSegmentCount == 0)
     {
         error = "Merged segmentation must keep at least one segment.";
+        return false;
+    }
+
+    if (!(maxRelativeMergeCost >= 0.0))
+    {
+        error = "Merge cost limit must be non-negative.";
         return false;
     }
 
@@ -202,41 +250,22 @@ bool mergeSegmentsByBoundaryCost(
         for (const auto& pairEntry : adjacentPairs)
         {
             const AdjacentSegmentPair& pair = pairEntry.second;
-            if (pair.commonLength <= 1.0e-12)
-            {
-                continue;
-            }
-
             const uint32_t segmentA = pair.segmentA;
             const uint32_t segmentB = pair.segmentB;
-            const double commonAverage = pair.commonDifference / pair.commonLength;
-            // Eq. (14): compare the shared boundary against the union of the two current boundaries.
-            const double unionDifference =
-                boundaryDifference[static_cast<std::size_t>(segmentA)]
-                + boundaryDifference[static_cast<std::size_t>(segmentB)]
-                - pair.commonDifference;
-            const double unionLength =
-                boundaryLength[static_cast<std::size_t>(segmentA)]
-                + boundaryLength[static_cast<std::size_t>(segmentB)]
-                - pair.commonLength;
-            if (unionLength <= 1.0e-12)
+            const auto relativeCost = relativeBoundaryCost(
+                pair.commonDifference,
+                pair.commonLength,
+                boundaryDifference[segmentA],
+                boundaryLength[segmentA],
+                boundaryDifference[segmentB],
+                boundaryLength[segmentB]
+            );
+            if (!relativeCost.has_value())
             {
                 continue;
             }
 
-            const double unionAverage = unionDifference / unionLength;
-            if (unionAverage <= 1.0e-12)
-            {
-                continue;
-            }
-
-            const double relativeCost = commonAverage / unionAverage;
-            if (!std::isfinite(relativeCost))
-            {
-                continue;
-            }
-
-            queue.emplace(relativeCost, segmentA, segmentB);
+            queue.emplace(*relativeCost, segmentA, segmentB);
         }
 
         if (queue.empty())
@@ -281,12 +310,24 @@ bool mergeSmallSegmentsByTriangleCount(
     const CpuMesh& mesh,
     SegmentationModelType segmentationModelType,
     uint32_t minTriangleCount,
+    uint32_t minimumSegmentCount,
+    double maxRelativeMergeCost,
     std::vector<uint32_t>& inOutTriangleLabels,
     std::string& error
 )
 {
     error.clear();
 
+    if (minimumSegmentCount == 0)
+    {
+        error = "Small-segment cleanup must keep at least one segment.";
+        return false;
+    }
+    if (!(maxRelativeMergeCost >= 0.0))
+    {
+        error = "Cleanup cost limit must be non-negative.";
+        return false;
+    }
     if (minTriangleCount <= 1)
     {
         return true;
@@ -298,7 +339,6 @@ bool mergeSmallSegmentsByTriangleCount(
         error = "Cannot clean up small segments on an empty mesh.";
         return false;
     }
-
     if (inOutTriangleLabels.size() != faceCount)
     {
         error = "Segment label count does not match the face count.";
@@ -311,8 +351,9 @@ bool mergeSmallSegmentsByTriangleCount(
     {
         return false;
     }
-    (void)averageDifference;
 
+    // Count actual regions even when earlier operations left gaps in label IDs.
+    densifySegmentLabels(inOutTriangleLabels);
     for (;;)
     {
         uint32_t segmentCount = 0;
@@ -320,8 +361,7 @@ bool mergeSmallSegmentsByTriangleCount(
         {
             segmentCount = std::max(segmentCount, label + 1);
         }
-
-        if (segmentCount <= 1)
+        if (segmentCount <= minimumSegmentCount)
         {
             return true;
         }
@@ -329,7 +369,7 @@ bool mergeSmallSegmentsByTriangleCount(
         std::vector<uint32_t> segmentSizes(segmentCount, 0);
         for (const uint32_t label : inOutTriangleLabels)
         {
-            ++segmentSizes[static_cast<std::size_t>(label)];
+            ++segmentSizes[label];
         }
 
         struct NeighborStats
@@ -339,104 +379,77 @@ bool mergeSmallSegmentsByTriangleCount(
         };
 
         std::vector<std::unordered_map<uint32_t, NeighborStats> > neighborStats(segmentCount);
-
+        std::vector<double> boundaryDifference(segmentCount, 0.0);
+        std::vector<double> boundaryLength(segmentCount, 0.0);
         for (const FaceGraphEdgeInfo& edge : edges)
         {
-            const uint32_t label0 = inOutTriangleLabels[static_cast<std::size_t>(edge.face0)];
-            const uint32_t label1 = inOutTriangleLabels[static_cast<std::size_t>(edge.face1)];
+            const uint32_t label0 = inOutTriangleLabels[edge.face0];
+            const uint32_t label1 = inOutTriangleLabels[edge.face1];
             if (label0 == label1)
             {
                 continue;
             }
 
-            const double edgeBoundaryDifference = edge.edgeLength * edge.difference;
-            NeighborStats& stats01 = neighborStats[static_cast<std::size_t>(label0)][label1];
-            NeighborStats& stats10 = neighborStats[static_cast<std::size_t>(label1)][label0];
-            stats01.sharedDifference += edgeBoundaryDifference;
+            const double difference = edge.edgeLength * edge.difference;
+            boundaryDifference[label0] += difference;
+            boundaryDifference[label1] += difference;
+            boundaryLength[label0] += edge.edgeLength;
+            boundaryLength[label1] += edge.edgeLength;
+            NeighborStats& stats01 = neighborStats[label0][label1];
+            NeighborStats& stats10 = neighborStats[label1][label0];
+            stats01.sharedDifference += difference;
             stats01.sharedLength += edge.edgeLength;
-            stats10.sharedDifference += edgeBoundaryDifference;
+            stats10.sharedDifference += difference;
             stats10.sharedLength += edge.edgeLength;
         }
 
-        uint32_t segmentToMerge = segmentCount;
-        uint32_t mergeTarget = segmentCount;
-        uint32_t smallestSegmentSize = std::numeric_limits<uint32_t>::max();
-        double bestBoundaryAverage = std::numeric_limits<double>::infinity();
-        double bestSharedLength = -1.0;
-
-        for (uint32_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
+        // Smallest region first, then cheapest boundary, longest shared boundary,
+        // and finally label IDs so unordered-map iteration cannot break ties.
+        using Candidate = std::tuple<uint32_t, double, double, uint32_t, uint32_t>;
+        std::optional<Candidate> best;
+        for (uint32_t source = 0; source < segmentCount; ++source)
         {
-            const uint32_t segmentSize = segmentSizes[static_cast<std::size_t>(segmentIndex)];
-            if (segmentSize == 0 || segmentSize >= minTriangleCount)
+            if (segmentSizes[source] == 0 || segmentSizes[source] >= minTriangleCount)
             {
                 continue;
             }
-
-            uint32_t bestNeighbor = segmentCount;
-            double bestNeighborAverage = std::numeric_limits<double>::infinity();
-            double bestNeighborSharedLength = -1.0;
-
-            for (const auto& neighborEntry : neighborStats[static_cast<std::size_t>(segmentIndex)])
+            for (const auto& [target, stats] : neighborStats[source])
             {
-                const uint32_t neighborIndex = neighborEntry.first;
-                if (neighborIndex == segmentIndex || segmentSizes[static_cast<std::size_t>(neighborIndex)] == 0)
+                const auto cost = relativeBoundaryCost(
+                    stats.sharedDifference,
+                    stats.sharedLength,
+                    boundaryDifference[source],
+                    boundaryLength[source],
+                    boundaryDifference[target],
+                    boundaryLength[target]
+                );
+                if (!cost.has_value() || *cost > maxRelativeMergeCost)
                 {
                     continue;
                 }
-
-                const NeighborStats& stats = neighborEntry.second;
-                if (stats.sharedLength <= 1.0e-12)
+                const Candidate candidate{segmentSizes[source], *cost, -stats.sharedLength, source, target};
+                if (!best.has_value() || candidate < *best)
                 {
-                    continue;
+                    best = candidate;
                 }
-
-                const double boundaryAverage = stats.sharedDifference / stats.sharedLength;
-                if (boundaryAverage < bestNeighborAverage
-                    || (std::abs(boundaryAverage - bestNeighborAverage) <= 1.0e-12
-                        && stats.sharedLength > bestNeighborSharedLength))
-                {
-                    bestNeighbor = neighborIndex;
-                    bestNeighborAverage = boundaryAverage;
-                    bestNeighborSharedLength = stats.sharedLength;
-                }
-            }
-
-            if (bestNeighbor == segmentCount)
-            {
-                continue;
-            }
-
-            if (segmentSize < smallestSegmentSize
-                || (segmentSize == smallestSegmentSize && bestNeighborAverage < bestBoundaryAverage)
-                || (segmentSize == smallestSegmentSize
-                    && std::abs(bestNeighborAverage - bestBoundaryAverage) <= 1.0e-12
-                    && bestNeighborSharedLength > bestSharedLength))
-            {
-                segmentToMerge = segmentIndex;
-                mergeTarget = bestNeighbor;
-                smallestSegmentSize = segmentSize;
-                bestBoundaryAverage = bestNeighborAverage;
-                bestSharedLength = bestNeighborSharedLength;
             }
         }
-
-        if (segmentToMerge == segmentCount || mergeTarget == segmentCount)
+        if (!best.has_value())
         {
-            break;
+            return true;
         }
 
+        const uint32_t source = std::get<3>(*best);
+        const uint32_t target = std::get<4>(*best);
         for (uint32_t& label : inOutTriangleLabels)
         {
-            if (label == segmentToMerge)
+            if (label == source)
             {
-                label = mergeTarget;
+                label = target;
             }
         }
-
         densifySegmentLabels(inOutTriangleLabels);
     }
-
-    return true;
 }
 
 bool mergeAdjacentSegmentsByTriangles(

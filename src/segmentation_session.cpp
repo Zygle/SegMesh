@@ -189,7 +189,7 @@ bool SegmentationSession::buildAutomaticSeedPlan(
 )
 {
     const int minSeedCount = settings.automaticMode == AutomaticSegmentationMode::Fine ? 20 : 1;
-    const uint32_t targetSeedCount = static_cast<uint32_t>(std::max(settings.automaticSeedCount, minSeedCount));
+    const uint32_t targetSeedCount = static_cast<uint32_t>(std::max(settings.automaticSeedCount(), minSeedCount));
 
     bool success = false;
     if (settings.automaticMode == AutomaticSegmentationMode::Coarse)
@@ -287,17 +287,22 @@ bool SegmentationSession::buildPreviewLabels(
         && seedTriangles.size() < automaticSeedPlanTriangles.size();
 
     if (settings.automatic && settings.automaticMode == AutomaticSegmentationMode::Fine
-        && settings.mergeFineSegments && !automaticStepInProgress)
+        && !automaticStepInProgress)
     {
-        const uint32_t mergeTargetSegmentCount =
-            static_cast<uint32_t>(std::max(settings.mergeTargetSegmentCount, 1));
-        const double mergeCostLimit = settings.forceMergeTargetSegmentCount
+        const uint32_t minimumSegmentCount = settings.mergeFineSegments
+            ? static_cast<uint32_t>(std::max(settings.mergeTargetSegmentCount, 1))
+            : 1;
+        const double mergeCostLimit = settings.mergeFineSegments && settings.forceMergeTargetSegmentCount
             ? std::numeric_limits<double>::infinity()
             : static_cast<double>(settings.mergeCostThreshold);
-        if (!segmesh::mergeSegmentsByBoundaryCost(
+
+        // Give small regions priority within the same count and cost budget.
+        if (settings.cleanupSmallFineSegments
+            && !segmesh::mergeSmallSegmentsByTriangleCount(
                 mesh,
                 settings.model,
-                mergeTargetSegmentCount,
+                static_cast<uint32_t>(std::max(settings.minFineSegmentTriangles, 2)),
+                minimumSegmentCount,
                 mergeCostLimit,
                 outTriangleLabels,
                 error
@@ -305,17 +310,13 @@ bool SegmentationSession::buildPreviewLabels(
         {
             return false;
         }
-    }
 
-    if (settings.automatic && settings.automaticMode == AutomaticSegmentationMode::Fine
-        && settings.cleanupSmallFineSegments && !automaticStepInProgress)
-    {
-        const uint32_t minTriangleCount =
-            static_cast<uint32_t>(std::max(settings.minFineSegmentTriangles, 2));
-        if (!segmesh::mergeSmallSegmentsByTriangleCount(
+        if (settings.mergeFineSegments
+            && !segmesh::mergeSegmentsByBoundaryCost(
                 mesh,
                 settings.model,
-                minTriangleCount,
+                minimumSegmentCount,
+                mergeCostLimit,
                 outTriangleLabels,
                 error
             ))
