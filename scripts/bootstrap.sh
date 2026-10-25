@@ -12,7 +12,7 @@ echo "[2/4] Building bgfx release libraries and tools"
 make -C submods/bgfx linux-gcc-release64
 
 echo "[3/4] Configuring SegMesh"
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 echo "[4/4] Building SegMesh"
 cmake --build build -j"$(nproc)"
