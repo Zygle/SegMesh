@@ -168,6 +168,7 @@ add_executable(segmesh
   src/bezier.cpp
   src/border_curves.cpp
   src/border_trace.cpp
+  src/bspline.cpp
   src/camera.cpp
   src/face_graph.cpp
   src/obj_loader.cpp
